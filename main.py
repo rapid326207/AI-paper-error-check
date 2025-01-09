@@ -5,10 +5,7 @@ from sqlalchemy.orm import Session
 import PyPDF2
 import io
 import os
-from datetime import datetime
 from openai import OpenAI
-from spire.pdf import PdfDocument, PdfTextExtractOptions, PdfTextExtractor
-import time
 import json
 import asyncio
 
@@ -40,7 +37,7 @@ app.add_middleware(
 )
 
 # OpenAI client
-client = OpenAI(api_key=".....")
+client = OpenAI(api_key="sk-proj....")
 
 @app.get("/")
 async def root():
@@ -178,29 +175,19 @@ async def check_paper_stream(pdf_id: int, db: Session = Depends(get_db)):
                 yield f"data: {json.dumps({'error': 'PDF file not found on server'})}\n\n"
                 return
 
-            yield "data: **Processing PDF...** \n\n"
+            yield "data: **Processing PDF...**\n\n"
             yield "data:\n\n"
-            # Extract text using Spire.PDF
-            pdf = PdfDocument()
-            pdf.LoadFromFile(document.file_path)
-            
-            extract_options = PdfTextExtractOptions()
-            extracted_text = ""
-            
-            for i in range(pdf.Pages.Count):
-                page = pdf.Pages.get_Item(i)
-                text_extractor = PdfTextExtractor(page)
-                text = text_extractor.ExtractText(extract_options)
-                extracted_text += text
+            # Extract text using PyPDF2
+            with open(document.file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                extracted_text = ""
+                
+                for page in pdf_reader.pages:
+                    extracted_text += page.extract_text()
 
-            # Clean up the text
-            cleaned_text = extracted_text.replace(
-                "Evaluation Warning : The document was created with Spire.PDF for Python.",
-                ""
-            )
-
-            yield "data: **Analyzing content...** \n\n"
+            yield "data: **Analyzing content...**\n\n"
             yield "data:\n\n"
+            
             response = client.chat.completions.create(
                 model="o1-preview",
                 messages=[
@@ -209,7 +196,7 @@ async def check_paper_stream(pdf_id: int, db: Session = Depends(get_db)):
                         "content": (
                             "I have a scientific paper that I would like to analyze these papers and identify any errors and give me the solution for each error. "
                             "These errors could be in calculations, logic, methodology, data interpretation, or even formatting. "
-                            "This is the full paper: " + cleaned_text
+                            "This is the full paper: " + extracted_text
                         )
                     }
                 ],
