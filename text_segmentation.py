@@ -5,6 +5,13 @@ import os
 from gensim.models import KeyedVectors
 import numpy as np
 from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectoriz# Class containing different methods to segment a given text
+import spacy
+import nltk
+import os
+from gensim.models import KeyedVectors
+import numpy as np
+from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 import string
 import math

@@ -8,9 +8,51 @@ import os
 from openai import OpenAI
 import json
 import asyncio
-
+from tenacity import retry, stop_after_attempt, wait_exponential
+import concurrent.futures
+import fitz  # PyMuPDF
+import traceback
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+import numpy as np
 from models import PDFDocument, PDFDocumentCreate, PDFDocumentResponse
 from database import get_db, engine, Base
+import requests.adapters
+from urllib3.util.retry import Retry
+import requests
+from utils.rag import RAGProcessor
+import logging
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Get API key from environment
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY not found in environment variables")
+
+# Configure requests with retry strategy
+retry_strategy = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+)
+adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
+http = requests.Session()
+http.mount("https://", adapter)
+http.mount("http://", adapter)
+
+# Simple text processing helpers
+def truncate_text(text: str, max_chars: int = 16000) -> str:
+    """Truncate text to maximum character length while preserving word boundaries"""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(' ', 1)[0]
 
 # Create the application
 app = FastAPI()
@@ -19,7 +61,7 @@ app = FastAPI()
 Base.metadata.create_all(bind=engine)
 
 origins = [
-    "http://localhost:3002",
+    "http://localhost:8001",
     "http://localhost:3001",
     "http://localhost:3000",
     "http://localhost:8000",
@@ -36,8 +78,181 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
-# OpenAI client
-client = OpenAI(api_key="sk-proj....")
+# OpenAI client with timeout and environment API key
+client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)
+
+# Initialize RAG processor after OpenAI client
+rag_processor = RAGProcessor(OPENAI_API_KEY)
+
+# Retry decorator for OpenAI calls
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+async def analyze_with_openai(text_chunk):
+    try:
+        if not text_chunk:
+            return "Error: Empty text chunk"
+            
+        # Simple character-based truncation
+        text_chunk = truncate_text(text_chunk)
+        logger.info(f"Processing text chunk of length: {len(text_chunk)}")
+                
+        response = client.chat.completions.create(
+            model="o1-mini",  # Using smaller model for faster response
+            messages=[
+                {
+                    "role": "user",
+                    "content": "You are a scientific paper analyzer. Focus on identifying errors in: calculations, logic, methodology, data interpretation, and formatting. Be concise."
+                },
+                {
+                    "role": "user",
+                    "content": text_chunk
+                }
+            ],
+            temperature=1,  # Lower temperature for more focused responses
+            max_completion_tokens=1000  # Limit response length
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"OpenAI API error: {str(e)}")
+        return f"Analysis error: {str(e)}"
+
+# Parallel text extraction
+def extract_text_from_page(page):
+    return page.extract_text()
+
+def validate_pdf(file_path):
+    """Validate PDF file and return number of pages if valid"""
+    try:
+        # Try with PyMuPDF first
+        doc = fitz.open(file_path)
+        page_count = doc.page_count
+        doc.close()
+        return True, page_count
+    except Exception as e:
+        try:
+            # Fallback to PyPDF2
+            with open(file_path, 'rb') as file:
+                pdf = PyPDF2.PdfReader(file)
+                if len(pdf.pages) > 0:
+                    return True, len(pdf.pages)
+        except Exception as e:
+            return False, str(e)
+    return False, "Invalid PDF format"
+
+def extract_text_safely(file_path):
+    """Extract text from PDF using multiple methods"""
+    text_chunks = []
+    try:
+        # Try PyMuPDF first
+        doc = fitz.open(file_path)
+        for page in doc:
+            try:
+                text = page.get_text()
+                text_chunks.append(text)
+            except Exception as e:
+                text_chunks.append(f"[Error extracting page {page.number + 1}]")
+        doc.close()
+    except Exception as e:
+        # Fallback to PyPDF2
+        try:
+            with open(file_path, 'rb') as file:
+                pdf = PyPDF2.PdfReader(file)
+                for i, page in enumerate(pdf.pages):
+                    try:
+                        text = page.extract_text()
+                        if text.strip():
+                            text_chunks.append(text)
+                        else:
+                            text_chunks.append(f"[Empty page {i + 1}]")
+                    except Exception as page_error:
+                        text_chunks.append(f"[Error extracting page {i + 1}]")
+        except Exception as pdf_error:
+            raise Exception(f"Failed to extract text: {str(pdf_error)}")
+    
+    if not text_chunks:
+        raise Exception("No text could be extracted from the PDF")
+    
+    return "\n".join(text_chunks)
+
+def latex_to_markdown(text):
+    """Convert LaTeX-style formatting to Markdown
+    
+    Args:
+        text (str): Text containing LaTeX formatting
+        
+    Returns:
+        str: Text converted to Markdown format
+    
+    Example:
+        >>> latex_to_markdown("[ 7,000, \\text{ng/kg/day} \\times 60, \\text{kg} = 420,000, \\text{ng/day} ]")
+        "**7,000 ng/kg/day × 60 kg = 420,000 ng/day**"
+    """
+    converted_text = text
+    
+    # Replace LaTeX math mode brackets with bold markers
+    converted_text = converted_text.replace('[', '**')
+    converted_text = converted_text.replace(']', '**')
+    
+    # Replace LaTeX \text{} with plain text
+    while '\\text{' in converted_text:
+        start = converted_text.find('\\text{')
+        end = converted_text.find('}', start)
+        if end != -1:
+            text_content = converted_text[start+6:end]
+            converted_text = converted_text[:start] + text_content + converted_text[end+1:]
+    
+    # Replace LaTeX symbols with their Unicode equivalents
+    latex_symbols = {
+        '\\times': '×',
+        '\\div': '÷',
+        '\\pm': '±',
+        '\\leq': '≤',
+        '\\geq': '≥',
+        '\\neq': '≠',
+        '\\approx': '≈',
+        '\\alpha': 'α',
+        '\\beta': 'β',
+        '\\gamma': 'γ',
+        '\\delta': 'δ',
+        '\\mu': 'μ',
+        '\\sigma': 'σ',
+        '\\degree': '°'
+    }
+    
+    for latex, symbol in latex_symbols.items():
+        converted_text = converted_text.replace(latex, symbol)
+    
+    return converted_text
+
+def process_text_for_rag(text: str, document_metadata: dict) -> tuple[list[dict], FAISS]:
+    """Process text through RAG pipeline"""
+    try:
+        chunks = rag_processor.create_chunks_with_metadata(text, document_metadata)
+        print(chunks)
+        vectorstore = rag_processor.create_embeddings(chunks)
+        print(vectorstore)
+        return chunks, vectorstore
+    except Exception as e:
+        logger.error(f"RAG processing error: {str(e)}")
+        raise Exception(f"Failed to process text: {str(e)}")
+
+async def analyze_chunks(chunks: list[dict], vectorstore: FAISS) -> str:
+    """Analyze most relevant chunks and combine results"""
+    queries = [
+        "Identify errors in calculations and mathematical formulas",
+        "Find issues with research methodology and experimental design",
+        "Detect logical inconsistencies and flaws in argumentation",
+        "Check for data interpretation errors and statistical issues"
+    ]
+    
+    all_results = []
+    for query in queries:
+        relevant_texts = rag_processor.get_relevant_chunks(vectorstore, query)
+        for text in relevant_texts:
+            analysis = await analyze_with_openai(text)
+            if analysis and not analysis.startswith("Analysis error"):
+                all_results.append(analysis)
+    
+    return "\n\n".join(all_results)
 
 @app.get("/")
 async def root():
@@ -107,45 +322,31 @@ async def get_pdfs(db: Session = Depends(get_db)):
 async def check_paper(pdf_id: int, db: Session = Depends(get_db)):
     try:
         document = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
-
         if not document:
             return JSONResponse(
-                content={'error': 'PDF not found'},
+                content={'error': 'PDF document not found'},
                 status_code=404
             )
 
-        pdf = PdfDocument()
-        pdf.LoadFromFile(document.file_path)
-        
-        extract_options = PdfTextExtractOptions()
-        extracted_text = ""
-        
-        for i in range(pdf.Pages.Count):
-            page = pdf.Pages.get_Item(i)
-            text_extractor = PdfTextExtractor(page)
-            text = text_extractor.ExtractText(extract_options)
-            extracted_text += text
+        # Validate PDF
+        is_valid, page_count_or_error = validate_pdf(document.file_path)
+        if not is_valid:
+            return JSONResponse(
+                content={'error': f'Invalid PDF file: {page_count_or_error}'},
+                status_code=400
+            )
 
-        # Clean up the text
-        cleaned_text = extracted_text.replace(
-            "Evaluation Warning : The document was created with Spire.PDF for Python.",
-            ""
-        )
+        # Extract text safely
+        try:
+            extracted_text = extract_text_safely(document.file_path)
+        except Exception as e:
+            return JSONResponse(
+                content={'error': f'Text extraction failed: {str(e)}'},
+                status_code=400
+            )
 
-        # Analyze the paper using OpenAI
-        response = client.chat.completions.create(
-            model="o1-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "I have a scientific paper that I would like to analyze these papers and identify any errors and give me the solution for each error. These errors could be in calculations, logic, methodology, data interpretation, or even formatting. This is the full paper: " + cleaned_text
-                    )
-                }
-            ]
-        )
-
-        analysis_results = response.choices[0].message.content
+        # Analyze with optimized OpenAI call
+        analysis_results = await analyze_with_openai(extracted_text)
 
         return JSONResponse(
             content={
@@ -156,6 +357,7 @@ async def check_paper(pdf_id: int, db: Session = Depends(get_db)):
         )
 
     except Exception as e:
+        traceback.print_exc()  # Log the full error
         return JSONResponse(
             content={'error': str(e)},
             status_code=400
@@ -165,7 +367,6 @@ async def check_paper(pdf_id: int, db: Session = Depends(get_db)):
 async def check_paper_stream(pdf_id: int, db: Session = Depends(get_db)):
     async def event_stream():
         try:
-            # Get document from database
             document = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
             if not document:
                 yield f"data: {json.dumps({'error': 'PDF not found'})}\n\n"
@@ -175,56 +376,80 @@ async def check_paper_stream(pdf_id: int, db: Session = Depends(get_db)):
                 yield f"data: {json.dumps({'error': 'PDF file not found on server'})}\n\n"
                 return
 
+            yield "data: **Validating PDF...**\n\n"
+            yield "data: \n\n"
+            
+            # Validate PDF
+            is_valid, page_count_or_error = validate_pdf(document.file_path)
+            if not is_valid:
+                yield f"data: {json.dumps({'error': f'Invalid PDF file: {page_count_or_error}'})}\n\n"
+                return
+
             yield "data: **Processing PDF...**\n\n"
-            yield "data:\n\n"
-            # Extract text using PyPDF2
-            with open(document.file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                extracted_text = ""
-                
-                for page in pdf_reader.pages:
-                    extracted_text += page.extract_text()
-
-            yield "data: **Analyzing content...**\n\n"
-            yield "data:\n\n"
+            yield "data: \n\n"
             
-            response = client.chat.completions.create(
-                model="o1-preview",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            "I have a scientific paper that I would like to analyze these papers and identify any errors and give me the solution for each error. "
-                            "These errors could be in calculations, logic, methodology, data interpretation, or even formatting. "
-                            "This is the full paper: " + extracted_text
-                        )
-                    }
-                ],
-                stream=True
-            )
+            try:
+                extracted_text = extract_text_safely(document.file_path)
+                if not extracted_text.strip():
+                    raise Exception("No valid text content extracted from PDF")
+                
+                # Process text through RAG pipeline with better error handling
+                document_metadata = {
+                    "title": document.title,
+                    "pdf_id": document.id,
+                    "file_path": document.file_path
+                }
+                
+                yield "data: **Processing text chunks...**\n\n"
+                chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
+                
+                yield "data: **Analyzing content...**\n\n"
+                yield "data: \n\n"
+                
+                # Analyze chunks with streaming response
+                response = client.chat.completions.create(
+                    model="o1-preview",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": "You are a scientific paper analyzer. Focus on identifying errors in: calculations, logic, methodology, data interpretation, and formatting. And give me the solution for the errors. Be concise."
+                        },
+                        {
+                            "role": "user",
+                            "content": await analyze_chunks(chunks, vectorstore)
+                        }
+                    ],
+                    stream=True,
+                )
 
-            buffer = ""
-            for chunk in response:
-                if chunk.choices[0].delta.content is not None:
-                    buffer += chunk.choices[0].delta.content
-                    # Check if we have complete sentences or paragraphs
-                    if any(delimiter in buffer for delimiter in ['.', '!', '?', '\n']):
-                        # Split by sentences while preserving line breaks
-                        parts = buffer.split('\n')
-                        for i, part in enumerate(parts[:-1]):  # Process all but the last part
-                            if part.strip():  # Only send non-empty lines
-                                yield f"data: {part}\n\n"
-                        buffer = parts[-1]  # Keep the last part in buffer
+                buffer = ""
+                for chunk in response:
+                    if chunk.choices[0].delta.content is not None:
+                        buffer += chunk.choices[0].delta.content
+                        if any(delimiter in buffer for delimiter in ['.', '!', '?', '\n']):
+                            parts = buffer.split('\n')
+                            for i, part in enumerate(parts[:-1]):
+                                if part.strip():
+                                    converted_text = latex_to_markdown(part)
+                                    yield f"data: {converted_text}\n\n"
+                            buffer = parts[-1]
+                        
+                    await asyncio.sleep(0)
+                
+                # Convert any remaining text in buffer
+                if buffer.strip():
+                    converted_text = latex_to_markdown(buffer)
+                    yield f"data: {converted_text}\n\n"
                     
-                await asyncio.sleep(0)
-            
-            # Send any remaining content in the buffer
-            if buffer.strip():
-                yield f"data: {buffer}\n\n"
-                
-            yield "data: [$Analysis Done.$]\n\n"
+                yield "data: [$Analysis Done.$]\n\n"
+
+            except Exception as e:
+                logger.error(f"Processing error: {str(e)}")
+                yield f"data: {json.dumps({'error': f'Processing failed: {str(e)}'})}\n\n"
+                return
 
         except Exception as e:
+            logger.error(f"Stream error: {str(e)}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
@@ -235,4 +460,4 @@ async def check_paper_stream(pdf_id: int, db: Session = Depends(get_db)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)
