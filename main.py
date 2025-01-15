@@ -69,16 +69,18 @@ origins = [
     "http://localhost:3000",
     "http://localhost:8000",
     "http://localhost",
+    "https://devai1.nobleblocks.com",
+    "http://devai1.nobleblocks.com"  # Include both HTTP and HTTPS
 ]
-
-# CORS configuration
+# Update CORS middleware with additional security headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]
+    expose_headers=["*"],
+    allow_origin_regex="https://.*\.nobleblocks\.com"  # Allow all subdomains
 )
 
 # OpenAI client with timeout and environment API key
@@ -285,7 +287,7 @@ async def get_pdfs(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/pdfs/{pdf_id}/check_paper_stream")
+@app.get("/api/pdfs/{pdf_id}/check_paper_stream/")
 async def check_paper_stream(pdf_id: int, db: Session = Depends(get_db)):
     async def event_stream():
         try:
@@ -401,7 +403,7 @@ async def analyze_with_orchestrator(text: str, metadata: dict) -> dict:
     orchestrator = Orchestrator(client)
     return await orchestrator.analyze_paper(text, metadata)
 
-@app.get("/api/pdfs/{pdf_id}/check_paper_fully")
+@app.get("/api/pdfs/{pdf_id}/check_paper_fully/")
 async def check_paper_stream_orchestrator(pdf_id: int, db: Session = Depends(get_db)):
     async def event_stream():
         try:
@@ -486,7 +488,7 @@ async def check_paper_stream_orchestrator(pdf_id: int, db: Session = Depends(get
         media_type="text/event-stream"
     )
 
-@app.get("/api/pdfs/{pdf_id}/check_paper")
+@app.get("/api/pdfs/{pdf_id}/check_paper/")
 async def check_paper(pdf_id: int, db: Session = Depends(get_db)):
     try:
         document = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
@@ -536,7 +538,12 @@ async def check_paper(pdf_id: int, db: Session = Depends(get_db)):
                 "metadata": metadata,
                 "analysis": analysis_result["analysis"]
             },
-            status_code=200
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         )
 
     except Exception as e:
@@ -544,7 +551,7 @@ async def check_paper(pdf_id: int, db: Session = Depends(get_db)):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/pdfs/{pdf_id}/get_summary")
+@app.get("/api/pdfs/{pdf_id}/get_summary/")
 async def get_summary(pdf_id: int, db: Session = Depends(get_db)):
     document = db.query(PDFDocument).filter(PDFDocument.id == pdf_id).first()
     if not document:
@@ -674,14 +681,18 @@ async def get_summary(pdf_id: int, db: Session = Depends(get_db)):
         }
     
     return JSONResponse(
-            content={
-                "status": "success",
-                "summary": summary
-            },
-            status_code=200
-        )
-    
-            
+        content={
+            "status": "success",
+            "summary": summary
+        },
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type"
+        }
+    )
+       
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
