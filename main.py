@@ -496,8 +496,10 @@ async def analyze_paper_comprehensive(text: str) -> dict:
                 }
             ]
         )
-        
-        result = json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        if content.startswith("```json") and content.endswith("```"):
+            content = content[7:-3].strip()
+        result = json.loads(content)
         return result
         
     except Exception as e:
