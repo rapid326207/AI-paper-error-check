@@ -399,10 +399,125 @@ async def check_paper_stream(pdf_id: int, db: Session = Depends(get_db)):
         media_type="text/event-stream",
     )
 
-async def analyze_with_orchestrator(text: str, metadata: dict) -> dict:
-    orchestrator = Orchestrator(client)
-    return await orchestrator.analyze_paper(text, metadata)
+async def analyze_paper_comprehensive(text: str) -> dict:
+    """Single comprehensive analysis replacing multiple agent calls"""
+    try:
+        response = client.chat.completions.create(
+            model="o1-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": """As a comprehensive scientific paper analyzer, analyze the paper in these key areas:
 
+                                1. CALCULATIONS AND MATHEMATICS:
+                                - Check formulas, equations, units
+                                - Verify statistical calculations
+                                - Look for numerical inconsistencies
+
+                                2. LOGICAL REASONING:
+                                - Identify logical fallacies
+                                - Check argument consistency
+                                - Verify causation claims
+
+                                3. METHODOLOGY:
+                                - Evaluate research design
+                                - Check sampling methods
+                                - Assess controls and procedures
+
+                                4. DATA INTERPRETATION:
+                                - Review statistical analysis
+                                - Check results presentation
+                                - Verify conclusions
+
+                                5. FORMATTING AND STRUCTURE:
+                                - Check citations and references
+                                - Evaluate paper organization
+                                - Review technical writing
+
+                                For each area:
+                                - List specific errors found
+                                - Explain why each error is significant
+                                - Provide clear solutions
+                                - Provide error counts
+
+                                For each error:
+                                - Rate severity (High/Medium/Low)
+
+                                Format your response as JSON:
+                                {
+                                    "analysis": [
+                                        {
+                                            "type": "calculation",
+                                            "findings": [
+                                              {
+                                                "error": "Error Title",
+                                                "explanation": "Error Description",
+                                                "solution": "Solution for the Error",
+                                                "severity": "high/medium/low"
+                                              },
+                                              {
+                                                "error": "Error Title",
+                                                "explanation": "Error Description",
+                                                "solution": "Solution for the Error",
+                                                "severity": "high/medium/low"
+                                              }
+                                            ],
+                                            "counts": "error counts"
+                                        },
+                                        {
+                                            "type": "logic",
+                                            "findings": [
+                                              {
+                                                "error": "Error Title",
+                                                "explanation": "Error Description",
+                                                "solution": "Solution for the Error",
+                                                "severity": "high/medium/low"
+                                              },
+                                              {
+                                                "error": "Error Title",
+                                                "explanation": "Error Description",
+                                                "solution": "Solution for the Error",
+                                                "severity": "high/medium/low"
+                                              }
+                                            ],
+                                            "counts": "error counts"
+                                        }
+                                    ],
+                                    "summary": {
+                                        "total_errors": number,
+                                        "major_concerns": [list of critical issues],
+                                        "improvement_priority": "what to fix first"
+                                    }
+                                }"""
+                },
+                {
+                    "role": "user",
+                    "content": "Now analyze this paper: " + text
+                }
+            ]
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Comprehensive analysis error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Replace existing analyze_with_orchestrator with:
+async def analyze_with_orchestrator(text: str, metadata: dict) -> dict:
+    """Simplified orchestrator using single comprehensive analysis"""
+    try:
+        analysis_result = await analyze_paper_comprehensive(text)
+        
+        # Add metadata to result
+        analysis_result["metadata"] = metadata
+        
+        return analysis_result
+    except Exception as e:
+        logger.error(f"Orchestrator error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+        
 @app.get("/api/pdfs/{pdf_id}/check_paper_fully/")
 async def check_paper_stream_orchestrator(pdf_id: int, db: Session = Depends(get_db)):
     async def event_stream():
