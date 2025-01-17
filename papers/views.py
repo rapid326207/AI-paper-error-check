@@ -39,7 +39,7 @@ class PaperViewSet(viewsets.ModelViewSet):
         document = self.get_object()
         try:
             # Validate PDF
-            is_valid, error = validate_pdf.delay(document.file.path).get()
+            is_valid, error = validate_pdf(document.file.path)
             if not is_valid:
                 return Response(
                     {"error": f"Invalid PDF file: {error}"}, 
@@ -47,7 +47,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 )
 
             # Extract and analyze text
-            extracted_text = extract_text_safely.delay(document.file.path).get()
+            extracted_text = extract_text_safely(document.file.path)
             text_length = len(extracted_text)
             document_metadata = {
                 "title": document.title,
@@ -56,8 +56,8 @@ class PaperViewSet(viewsets.ModelViewSet):
             }
             if text_length > 512000:
           
-                chunks, vectorstore = process_text_for_rag.delay(extracted_text, document_metadata).get()
-                content_to_analyze = analyze_chunks.delay(chunks, vectorstore).get()
+                chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
+                content_to_analyze = analyze_chunks(chunks, vectorstore)
             else:
                 content_to_analyze = extracted_text
 
@@ -82,7 +82,7 @@ class PaperViewSet(viewsets.ModelViewSet):
         document = self.get_object()
         try:
             # Validate PDF
-            is_valid, error = validate_pdf.delay(document.file.path).get()
+            is_valid, error = validate_pdf(document.file.path)
             if not is_valid:
                 return Response(
                     {"error": f"Invalid PDF file: {error}"}, 
@@ -90,7 +90,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 )
 
             # Extract and analyze text
-            extracted_text = extract_text_safely.delay(document.file.path).get()
+            extracted_text = extract_text_safely(document.file.path)
             text_length = len(extracted_text)
             document_metadata = {
                 "title": document.title,
@@ -99,8 +99,8 @@ class PaperViewSet(viewsets.ModelViewSet):
             }
 
             if text_length > 512000:
-                chunks, vectorstore = process_text_for_rag.delay(extracted_text, document_metadata).get()
-                content_to_analyze = analyze_chunks.delay(chunks, vectorstore).get()
+                chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
+                content_to_analyze = analyze_chunks(chunks, vectorstore)
             else:
                 content_to_analyze = extracted_text
 
