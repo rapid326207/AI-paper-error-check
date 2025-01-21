@@ -17,7 +17,14 @@ class PaperAnalysis(models.Model):
     paper = models.ForeignKey('Paper', on_delete=models.CASCADE, related_name='analyses')
     analysis_data = models.JSONField()
     analyzed_at = models.DateTimeField(default=timezone.now)
-    
+    total_errors = models.IntegerField(default=0)
+    math_errors = models.IntegerField(default=0)
+    methdology_errors = models.IntegerField(default=0)
+    logical_framework_errors = models.IntegerField(default=0)
+    data_analysis_errors = models.IntegerField(default=0)
+    technical_presentation_errors = models.IntegerField(default=0)
+    research_quality_errors = models.IntegerField(default=0)
+
     class Meta:
         ordering = ['-analyzed_at']
 

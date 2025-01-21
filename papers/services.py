@@ -13,7 +13,7 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 # Initialize clients
-OPENAI_API_KEY = "sk-proj...."
+OPENAI_API_KEY = "sk-proj....."
 
 client = OpenAI(
     api_key=OPENAI_API_KEY, 
@@ -160,7 +160,7 @@ def analyze_chunks(chunks: list[dict], stored_data: dict) -> str:
     return "\n\n".join(all_results)
 
 @shared_task()
-def analyze_paper_comprehensive(text: str) -> Dict:
+def analyze_paper_comprehensive(text: str):
     response = client.chat.completions.create(
         model="o1-preview",
         messages=[
@@ -248,7 +248,9 @@ def analyze_paper_comprehensive(text: str) -> Dict:
                         "major_concerns": [
                             "list of most critical issues requiring immediate attention"
                         ],
-                        "improvement_priority": "prioritized list of what should be fixed first, second, etc.",
+                        "improvement_priority": [
+                            "prioritized list of what should be fixed first, second, etc."
+                        ],
                         "overall_assessment": "brief evaluation of paper quality",
                         "quality_score": "numerical score 1-10"
                     }
@@ -281,8 +283,15 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
         
         # Save the analysis result
         paper_analysis = PaperAnalysis.objects.create(
-            paper=paper,
-            analysis_data=analysis_result,
+            paper = paper,
+            analysis_data = analysis_result,
+            total_errors = analysis_result["summary"]["total_errors"],
+            math_errors = analysis_result["analysis"][0]["counts"],
+            methdology_errors = analysis_result["analysis"][1]["counts"],
+            logical_framework_errors = analysis_result["analysis"][2]["counts"],
+            data_analysis_errors = analysis_result["analysis"][3]["counts"],
+            technical_presentation_errors = analysis_result["analysis"][4]["counts"],
+            research_quality_errors = analysis_result["analysis"][5]["counts"],
             analyzed_at=timezone.now()
         )
         
