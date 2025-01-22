@@ -212,14 +212,17 @@ class PaperViewSet(viewsets.ModelViewSet):
         for analysis in analysises:
             try:
                 analysis_data = analysis.analysis_data
-                
                 # Get error counts from each category in analysis
                 analysis.math_errors = analysis_data['analysis'][0]['counts']  # Mathematical
                 analysis.methdology_errors = analysis_data['analysis'][1]['counts']  # Methodological
-                analysis.logical_framework_errors = analysis_data['analysis'][2]['counts']  # Logical
-                analysis.data_analysis_errors = analysis_data['analysis'][3]['counts']  # Data Analysis
-                analysis.technical_presentation_errors = analysis_data['analysis'][4]['counts']  # Technical
-                analysis.research_quality_errors = analysis_data['analysis'][5]['counts']  # Research Quality
+                if len(analysis_data['analysis']) > 2:
+                    analysis.logical_framework_errors = analysis_data['analysis'][2]['counts']  # Logical
+                if len(analysis_data['analysis']) > 3:
+                    analysis.data_analysis_errors = analysis_data['analysis'][3]['counts']  # Data Analysis
+                if len(analysis_data['analysis']) > 4:
+                   analysis.technical_presentation_errors = analysis_data['analysis'][4]['counts']  # Technical
+                if len(analysis_data['analysis']) > 5:
+                   analysis.research_quality_errors = analysis_data['analysis'][5]['counts']  # Research Quality
                 
                 # Calculate total errors
                 analysis.total_errors = (
