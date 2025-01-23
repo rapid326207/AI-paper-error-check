@@ -10,6 +10,7 @@ from papers.utils.rag import RAGProcessor
 from celery import shared_task
 from papers.models import Paper, PaperAnalysis, PaperSummary
 from django.utils import timezone
+from docx2python import docx2python
 logger = logging.getLogger(__name__)
 
 # Initialize clients
@@ -95,16 +96,29 @@ def validate_pdf(file_path):
 def extract_text_safely(file_path):
     """Extract text from PDF using multiple methods"""
     text_chunks = []
+    file_ext = os.path.splitext(file_path)[1].lower()
+
     try:
         # Try PyMuPDF first
-        doc = fitz.open(file_path)
-        for page in doc:
-            try:
-                text = page.get_text()
-                text_chunks.append(text)
-            except Exception as e:
-                text_chunks.append(f"[Error extracting page {page.number + 1}]")
-        doc.close()
+        if file_ext == '.pdf':
+            doc = fitz.open(file_path)
+            for page in doc:
+                try:
+                    text = page.get_text()
+                    text_chunks.append(text)
+                except Exception as e:
+                    text_chunks.append(f"[Error extracting page {page.number + 1}]")
+            doc.close()
+            
+        # Handle DOCX files    
+        elif file_ext == '.docx':
+            with docx2python(file_path) as docx_content:
+                text_chunks.append(docx_content.text)
+                
+        else:
+            raise ValueError(f"Unsupported file format: {file_ext}")
+            
+        return ' '.join(text_chunks)
     except Exception as e:
         # Fallback to PyPDF2
         try:
