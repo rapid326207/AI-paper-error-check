@@ -13,7 +13,7 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 # Initialize clients
-OPENAI_API_KEY = "sk-proj....."
+OPENAI_API_KEY = "sk-proj...."
 
 client = OpenAI(
     api_key=OPENAI_API_KEY, 
@@ -226,7 +226,7 @@ def analyze_paper_comprehensive(text: str):
                     - Overall quality assessment
                     - Quality score (1-10)
 
-                Return BOTH sections in this exact JSON structure:
+                Must provide all 6 error categories.(if the error count is zero) Return BOTH sections in this exact JSON structure:
                 {
                     "analysis": [
                         {
@@ -287,7 +287,7 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
             analysis_data = analysis_result,
             total_errors = analysis_result["summary"]["total_errors"],
             math_errors = analysis_result["analysis"][0]["counts"],
-            methdology_errors = analysis_result["analysis"][1]["counts"],
+            methodology_errors = analysis_result["analysis"][1]["counts"],
             logical_framework_errors = analysis_result["analysis"][2]["counts"],
             data_analysis_errors = analysis_result["analysis"][3]["counts"],
             technical_presentation_errors = analysis_result["analysis"][4]["counts"],

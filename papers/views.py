@@ -122,9 +122,29 @@ class PaperViewSet(viewsets.ModelViewSet):
         try:
             page = int(request.query_params.get('page', 1))
             page_size = request.query_params.get('page_size', 3)
+            sort_by = request.query_params.get('sort_by', 'total_errors')
+            order = request.query_params.get('order', 'desc')
             start_idx = (page - 1) * page_size
 
-            papers = Paper.objects.filter(has_summary=True, has_analysis=True).order_by('-created_at')
+            allowed_sort_fields = [  
+                'total_errors',
+                'math_errors',  
+                'methodology_errors',  
+                'logical_framework_errors',  
+                'data_analysis_errors',  
+                'technical_presentation_errors',  
+                'research_quality_errors',  
+            ]  
+            
+            if sort_by not in allowed_sort_fields:  
+                sort_by = 'total_errors'  # Fallback to default if invalid  
+                
+            if order == 'asc':  
+                order_prefix = ''  
+            else:  
+                order_prefix = '-' 
+            order_by_field = f'{order_prefix}analysis__{sort_by}'
+            papers = Paper.objects.select_related('analysis').filter(has_summary=True, has_analysis=True).order_by(order_by_field, '-created_at')  
             total_papers = papers.count()
             total_pages = (total_papers + page_size - 1) // page_size
 
@@ -164,7 +184,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             analysis_results = PaperAnalysis.objects.all()
             error_counts = {
                 'math_errors': 0,
-                'methdology_errors': 0,
+                'methodology_errors': 0,
                 'logical_framework_errors': 0,
                 'data_analysis_errors': 0,
                 'technical_presentation_errors': 0,
@@ -175,13 +195,13 @@ class PaperViewSet(viewsets.ModelViewSet):
             # Sum up errors from all analyses
             for analysis in analysis_results:                
                 error_counts['math_errors'] += analysis.math_errors
-                error_counts['methdology_errors'] += analysis.methdology_errors
+                error_counts['methodology_errors'] += analysis.methodology_errors
                 error_counts['logical_framework_errors'] += analysis.logical_framework_errors
                 error_counts['data_analysis_errors'] += analysis.data_analysis_errors
                 error_counts['technical_presentation_errors'] += analysis.technical_presentation_errors
                 error_counts['research_quality_errors'] += analysis.research_quality_errors
                 
-            error_counts['total_errors'] = error_counts['math_errors'] + error_counts['methdology_errors'] + error_counts['logical_framework_errors'] + error_counts['data_analysis_errors'] + error_counts['technical_presentation_errors'] + error_counts['research_quality_errors']
+            error_counts['total_errors'] = error_counts['math_errors'] + error_counts['methodology_errors'] + error_counts['logical_framework_errors'] + error_counts['data_analysis_errors'] + error_counts['technical_presentation_errors'] + error_counts['research_quality_errors']
 
             return Response({
                 'status': 'success',
@@ -190,7 +210,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                     'totalAnalyses': total_analyses,
                     'errorStatistics': {
                         'mathErrors': error_counts['math_errors'],
-                        'methdologyErrors': error_counts['methdology_errors'],
+                        'methdologyErrors': error_counts['methodology_errors'],
                         'logicalFrameworkErrors': error_counts['logical_framework_errors'],
                         'dataAnalysisErrors': error_counts['data_analysis_errors'],
                         'technicalPresentationErrors': error_counts['technical_presentation_errors'],
@@ -212,9 +232,10 @@ class PaperViewSet(viewsets.ModelViewSet):
         for analysis in analysises:
             try:
                 analysis_data = analysis.analysis_data
+                # analysis_data = {'analysis': [{'type': 'Methodological Issues', 'findings': [{'error': 'Lack of empirical evidence supporting the central claim', 'explanation': 'The paper proposes that the forbidden fruit was cannabis but does not provide empirical evidence, such as historical texts, linguistic analysis, or archaeological findings, to substantiate this claim.', 'solution': 'Include empirical research and evidence from credible historical, linguistic, or archaeological sources to support the interpretation.', 'location': "Throughout Sections 6 and 7 ('Author's Interpretation' and 'Mental and Logical Evidence Supporting the Theory of the Forbidden Fruit as Cannabis')", 'severity': 'high'}], 'counts': 1}, {'type': 'Logical Framework', 'findings': [{'error': 'Speculative arguments presented as conclusions', 'explanation': 'The author presents speculative interpretations without sufficient evidence, leading to conclusions that are not fully justified or logically derived from the premises.', 'solution': 'Frame the interpretations as hypotheses and ensure that conclusions are logically derived from well-substantiated arguments.', 'location': 'Sections 6 and 7', 'severity': 'high'}, {'error': 'Lack of engagement with existing scholarship', 'explanation': 'The paper does not critically engage with existing interpretations or scholarly work on the topic, missing an opportunity to position the argument within the broader academic discourse.', 'solution': 'Review and reference existing scholarly work on the topic, and explain how this new interpretation fits within or challenges current understandings.', 'location': 'Throughout the paper', 'severity': 'medium'}], 'counts': 2}, {'type': 'Technical Presentation', 'findings': [{'error': 'Citation inaccuracies and inconsistencies', 'explanation': 'Some references are improperly formatted, lack publication details, or are inconsistently presented, which affects the credibility and traceability of sources.', 'solution': 'Revise the references to ensure they are complete, accurately formatted, and consistent with a standard citation style (e.g., APA, MLA, Chicago).', 'location': 'References section and in-text citations throughout the paper', 'severity': 'medium'}, {'error': 'Writing clarity and grammatical issues', 'explanation': "Certain sentences are unclear or contain grammatical errors, which impede the reader's understanding and affect the professional tone of the paper.", 'solution': 'Proofread the paper carefully, or consider professional editing services to improve clarity, grammar, and overall readability.', 'location': 'Various sections throughout the paper', 'severity': 'low'}, {'error': 'Formatting inconsistencies', 'explanation': 'The paper exhibits inconsistencies in formatting, such as irregular headings, spacing, and alignment, which can distract the reader and detract from the professional presentation.', 'solution': 'Ensure consistent formatting throughout the document, adhering to guidelines provided by a specific style manual or journal requirements.', 'location': 'Throughout the paper', 'severity': 'low'}], 'counts': 3}, {'type': 'Research Quality', 'findings': [{'error': 'Potential for confirmation bias', 'explanation': 'The author presents evidence that primarily supports their hypothesis without adequately considering or addressing counterarguments or alternative interpretations.', 'solution': 'Acknowledge and address alternative perspectives and potential criticisms to strengthen the argument and demonstrate scholarly rigor.', 'location': 'Throughout Sections 6 and 7', 'severity': 'medium'}, {'error': 'Ethical considerations in interpretation', 'explanation': 'Reinterpreting religious texts in a way that significantly deviates from traditional understandings may require careful ethical consideration to respect religious sensitivities.', 'solution': 'Approach the reinterpretation with cultural and religious sensitivity, possibly including discussions on the implications and acknowledging the diversity of beliefs.', 'location': 'Sections 6, 7, and the Conclusion', 'severity': 'medium'}], 'counts': 2}, {'type': 'Logical Framework', 'findings': [{'error': 'Overgeneralization and unsupported causal links', 'explanation': 'The paper makes broad generalizations and asserts causal relationships without sufficient evidence, potentially leading to logical fallacies.', 'solution': 'Provide evidence for causal claims and avoid overgeneralizations by qualifying statements and acknowledging limitations.', 'location': "Section 7 ('Mental and Logical Evidence Supporting the Theory of the Forbidden Fruit as Cannabis')", 'severity': 'medium'}], 'counts': 1}], 'summary': {'total_errors': 9, 'major_concerns': ['Lack of empirical evidence to support the central claim', 'Speculative arguments presented without sufficient logical support', 'Citation inaccuracies and inconsistencies affecting credibility'], 'improvement_priority': ['First, incorporate empirical evidence from credible sources to substantiate the central hypothesis.', 'Second, strengthen the logical framework by ensuring conclusions are logically derived from well-supported premises.', 'Third, revise citations and references for accuracy and consistency with academic standards.', 'Fourth, address potential biases by engaging with existing scholarship and alternative viewpoints.', 'Fifth, improve writing clarity, grammar, and formatting to enhance readability and professional presentation.'], 'overall_assessment': "The paper presents an original and thought-provoking interpretation of the forbidden fruit as cannabis. However, significant methodological shortcomings and a lack of empirical evidence undermine the credibility of the argument. Strengthening the logical framework and adhering to academic standards in research and presentation are necessary to enhance the paper's academic quality.", 'quality_score': 4}, 'metadata': {'title': 'TheMotherofallsinsARTICLE.edited.June24 (1).docx.pdf', 'paper_id': 16, 'file_path': '/home/devai/Ai-check-backend/media/papers/TheMotherofallsinsARTICLE.edited.June24_1.docx.pdf'}}
                 # Get error counts from each category in analysis
                 analysis.math_errors = analysis_data['analysis'][0]['counts']  # Mathematical
-                analysis.methdology_errors = analysis_data['analysis'][1]['counts']  # Methodological
+                analysis.methodology_errors = analysis_data['analysis'][1]['counts']  # Methodological
                 if len(analysis_data['analysis']) > 2:
                     analysis.logical_framework_errors = analysis_data['analysis'][2]['counts']  # Logical
                 if len(analysis_data['analysis']) > 3:
@@ -227,7 +248,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 # Calculate total errors
                 analysis.total_errors = (
                     analysis.math_errors +
-                    analysis.methdology_errors + 
+                    analysis.methodology_errors + 
                     analysis.logical_framework_errors +
                     analysis.data_analysis_errors +
                     analysis.technical_presentation_errors +

@@ -14,12 +14,12 @@ class Paper(models.Model):
         return self.title
 
 class PaperAnalysis(models.Model):
-    paper = models.ForeignKey('Paper', on_delete=models.CASCADE, related_name='analyses')
+    paper = models.OneToOneField('Paper', on_delete=models.CASCADE, related_name='analysis')  
     analysis_data = models.JSONField()
     analyzed_at = models.DateTimeField(default=timezone.now)
     total_errors = models.IntegerField(default=0)
     math_errors = models.IntegerField(default=0)
-    methdology_errors = models.IntegerField(default=0)
+    methodology_errors = models.IntegerField(default=0)
     logical_framework_errors = models.IntegerField(default=0)
     data_analysis_errors = models.IntegerField(default=0)
     technical_presentation_errors = models.IntegerField(default=0)
