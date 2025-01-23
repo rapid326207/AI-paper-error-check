@@ -11,7 +11,8 @@ from celery import shared_task
 from papers.models import Paper, PaperAnalysis, PaperSummary
 from django.utils import timezone
 from docx2python import docx2python
- 
+import tiktoken
+
 logger = logging.getLogger(__name__)
 
 # Initialize clients
@@ -78,7 +79,6 @@ def validate_pdf(file_path):
     """Validate PDF file and return number of pages if valid"""
     try:
         # Try with PyMuPDF first
-        print(file_path)
         doc = fitz.open(file_path)
         page_count = doc.page_count
         doc.close()
@@ -286,8 +286,8 @@ def analyze_paper_comprehensive(text: str):
 def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
     try:
         # Get the paper object
-        paper = Paper.objects.get(id=metadata.get('paper_id'))
-        
+        paper = Paper.objects.select_related('summaries').get(id=metadata.get('paper_id'))
+        encoding = tiktoken.encoding_for_model('gpt-4')
         # Check if analysis already exists
         if paper.has_analysis:
             existing_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at')
@@ -313,6 +313,14 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
         
         # Update paper status
         paper.has_analysis = True
+        summary_prompt = generate_analysis_prompt(text)
+        analysis_prompt = generate_analysis_prompt(text)
+        prompt_tokens = len(encoding.encode(summary_prompt + analysis_prompt))
+        completion_tokens = len(encoding.encode(str(analysis_result))) + len(encoding.encode(str(paper.summaries.summary_data)))
+        total_cost = openai_api_calculate_cost(prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, "o1-preview")
+        paper.input_tokens = prompt_tokens
+        paper.output_tokens = completion_tokens
+        paper.total_cost = total_cost
         paper.save()
         
         return analysis_result
@@ -430,7 +438,7 @@ def generate_paper_summary(content: str, metadata: dict):
             summary_data=summary_result,
             generated_at=timezone.now()
         )
-        
+    
         # Update paper status if needed
         paper.has_summary = True  # Add this field to Paper model if needed
         paper.save()

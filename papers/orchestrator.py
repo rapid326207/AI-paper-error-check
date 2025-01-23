@@ -88,7 +88,6 @@ class Orchestrator:
         
         try:
             link_data = json.loads(link_response.choices[0].message.content)
-            print(link_data)
             summary["authors"] = [
                 author.strip() 
                 for author in link_data.get("authors", "").split(",")

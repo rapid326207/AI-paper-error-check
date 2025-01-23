@@ -273,7 +273,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             is_valid, error = validate_pdf(full_path)
             if not is_valid:
                 return Response(
-                    {"error": f"Invalid PDF file: {error}"}, 
+                    {"error": f"Invalid PDF file: {error}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -282,14 +282,17 @@ class PaperViewSet(viewsets.ModelViewSet):
             summary_prompt = generate_analysis_prompt(extracted_text)
             analysis_prompt = generate_analysis_prompt(extracted_text)
             prompt_tokens = len(encoding.encode(summary_prompt + analysis_prompt))
-            completion_tokens = len(encoding.encode(paper.analysis.analysis_data)) + len(encoding.encode(paper.summaries.summary_data)) 
+            completion_tokens = len(encoding.encode(str(paper.analysis.analysis_data))) + len(encoding.encode(str(paper.summaries.summary_data)))
             total_cost = openai_api_calculate_cost(prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, "o1-preview")
             paper.input_tokens = prompt_tokens
             paper.output_tokens = completion_tokens
             paper.total_cost = total_cost
             paper.save()
+
+        return Response({
+            'status': 'success',
+        })
             
         return Response({
             'status': 'success',
-            'data': papers
         })
