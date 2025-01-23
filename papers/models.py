@@ -10,6 +10,9 @@ class Paper(models.Model):
     error_message = models.TextField(null=True, blank=True)
     has_summary = models.BooleanField(default=False)
     has_analysis = models.BooleanField(default=False)
+    input_tokens = models.BigIntegerField(default=0)
+    output_tokens = models.BigIntegerField(default=0)
+    total_cost = models.FloatField(default=0)
     def __str__(self):
         return self.title
 
@@ -32,7 +35,7 @@ class PaperAnalysis(models.Model):
         return f"Analysis for {self.paper.title} at {self.analyzed_at}"
 
 class PaperSummary(models.Model):
-    paper = models.ForeignKey('Paper', on_delete=models.CASCADE, related_name='summaries')
+    paper = models.OneToOneField('Paper', on_delete=models.CASCADE, related_name='summaries')
     summary_data = models.JSONField()
     generated_at = models.DateTimeField(default=timezone.now)
     

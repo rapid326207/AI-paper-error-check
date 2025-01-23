@@ -6,10 +6,12 @@ from rest_framework.decorators import action
 from .models import Paper, PaperSummary, PaperAnalysis
 from .serializers import PaperSerializer
 from .services import (
-    validate_pdf, extract_text_safely, process_text_for_rag,
-    analyze_chunks, analyze_with_orchestrator, generate_paper_summary
+    validate_pdf, extract_text_safely, process_text_for_rag, openai_api_calculate_cost,
+    analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, generate_summary_prompt
 )
 import tiktoken
+from django.conf import settings
+import os
 
 class PaperViewSet(viewsets.ModelViewSet):
     queryset = Paper.objects.all()
@@ -262,12 +264,32 @@ class PaperViewSet(viewsets.ModelViewSet):
         
         return Response({"status": "success", "message": "Analysis conversion completed"})
     
-    @action(detail=True, methods=['get'])
+    @action(detail=False, methods=['get'])
     def calculate_cost(self, request, pk=None):
-        query = "Do you have a yearly plan?"
+        papers = Paper.objects.select_related('analysis', 'summaries').all()
         encoding = tiktoken.encoding_for_model('gpt-4')
-        print(f"Tokens: {len(encoding.encode(query))}")
+        for paper in papers:
+            full_path = (os.path.join(settings.MEDIA_ROOT, str(paper.file)))
+            is_valid, error = validate_pdf(full_path)
+            if not is_valid:
+                return Response(
+                    {"error": f"Invalid PDF file: {error}"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Extract and analyze text
+            extracted_text = extract_text_safely(full_path)
+            summary_prompt = generate_analysis_prompt(extracted_text)
+            analysis_prompt = generate_analysis_prompt(extracted_text)
+            prompt_tokens = len(encoding.encode(summary_prompt + analysis_prompt))
+            completion_tokens = len(encoding.encode(paper.analysis.analysis_data)) + len(encoding.encode(paper.summaries.summary_data)) 
+            total_cost = openai_api_calculate_cost(prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, "o1-preview")
+            paper.input_tokens = prompt_tokens
+            paper.output_tokens = completion_tokens
+            paper.total_cost = total_cost
+            paper.save()
+            
         return Response({
             'status': 'success',
-            'data': {len(encoding.encode(query))}
+            'data': papers
         })

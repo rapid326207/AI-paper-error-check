@@ -11,6 +11,7 @@ from celery import shared_task
 from papers.models import Paper, PaperAnalysis, PaperSummary
 from django.utils import timezone
 from docx2python import docx2python
+ 
 logger = logging.getLogger(__name__)
 
 # Initialize clients
@@ -77,6 +78,7 @@ def validate_pdf(file_path):
     """Validate PDF file and return number of pages if valid"""
     try:
         # Try with PyMuPDF first
+        print(file_path)
         doc = fitz.open(file_path)
         page_count = doc.page_count
         doc.close()
@@ -440,3 +442,217 @@ def generate_paper_summary(content: str, metadata: dict):
     except Exception as e:
         logger.error(f"Summary generation error: {str(e)}")
         raise Exception(str(e))
+
+@shared_task()
+def openai_api_calculate_cost(prompt_tokens, completion_tokens, total_tokens, model="o1-preview"):
+    pricing = {
+        'gpt-3.5-turbo-1106': {
+            'prompt': 0.001,
+            'completion': 0.002,
+        },
+        'gpt-4-1106-preview': {
+            'prompt': 0.01,
+            'completion': 0.03,
+        },
+        'gpt-4': {
+            'prompt': 0.03,
+            'completion': 0.06,
+        },
+        'o1-mini': {
+            'prompt': 0.003,
+            'completion': 0.012,
+        },
+        'o1-preview': {
+            'prompt': 0.015,
+            'completion': 0.06,
+        }
+
+    }
+
+    try:
+        model_pricing = pricing[model]
+    except KeyError:
+        raise ValueError("Invalid model specified")
+
+    prompt_cost = prompt_tokens * model_pricing['prompt'] / 1000
+    completion_cost = completion_tokens * model_pricing['completion'] / 1000
+
+    total_cost = prompt_cost + completion_cost
+    # round to 6 decimals
+    total_cost = round(total_cost, 6)
+
+    print(f"\nTokens used:  {prompt_tokens:,} prompt + {completion_tokens:,} completion = {total_tokens:,} tokens")
+    print(f"Total cost for {model}: ${total_cost:.4f}\n")
+
+    return total_cost
+
+@shared_task()
+def generate_summary_prompt(content:str):
+    return """As a scientific paper analysis expert, extract and analyze the following with high precision:
+
+                    1. METADATA EXTRACTION:
+                    - Author names with affiliations (comma-separated)
+                    - Paper DOI/URL (verify format)
+                    - Author/Institution links (including ORCID if available)
+                    - Full paper title
+                    - Publication date and journal/conference
+                    - Keywords and research areas
+
+                    2. HIERARCHICAL SUMMARY ANALYSIS:
+                    Create detailed but concise summaries (maximum 250 words each) that capture all key aspects:
+                    
+                    a) Basic Level (General Audience):
+                        Explain the research, its findings, and real-world impact using everyday language 
+                        and clear examples that anyone can understand. Focus on practical implications 
+                        and benefits to society.
+                    
+                    b) Intermediate Level (Advanced Undergrad/Graduate):
+                        Present the research objectives, methodology, and results using appropriate 
+                        technical terminology while maintaining clarity. Include key statistical 
+                        findings and theoretical framework references.
+                    
+                    c) Expert Level (Specialist/PhD):
+                        Provide a technical analysis covering methodology, implementation details, 
+                        statistical significance, theoretical implications, and research gaps. 
+                        Include critical evaluation and future research directions.
+
+                    3. TECHNICAL METRICS:
+                    - Sample size and methodology rigor
+                    - Statistical methods used
+                    - Validation approaches
+                    - Technical limitations
+
+                    Format response as JSON:
+                    {
+                        "metadata": {
+                            "authors": "["author1 (affiliation)", "author2 (affiliation)", ...]",
+                            "paper_link": "doi/url",
+                            "institution_links": ["url1", "url2"],
+                            "title": "complete title",
+                            "publication_info": {
+                                "date": "YYYY-MM-DD",
+                                "journal": "name",
+                                "keywords": ["keyword1", "keyword2"]
+                            }
+                        },
+                        "summary": {
+                            "child": "Clear explanation in everyday language (max 250 words)",
+                            "college": "Technical summary with key findings (max 250 words)",
+                            "phd": "Detailed technical analysis (max 250 words)"
+                        },
+                        "technical_assessment": {
+                            "methodology_score": "1-10",
+                            "statistical_rigor": "1-10",
+                            "validation_quality": "1-10",
+                            "technical_depth": "1-10"
+                        }
+                    }
+
+                    Guidelines for summaries:
+                    1. Basic: Use analogies and real-world examples, avoid jargon
+                    2. Intermediate: Balance technical accuracy with accessibility
+                    3. Expert: Maintain technical rigor while being concise
+                    4. Each summary must not exceed 250 words
+                    5. Include essential information without redundancy
+                    6. Use proper scientific writing style appropriate for each level
+
+                    Ensure:
+                    1. Summaries are clear and well-structured
+                    2. Technical accuracy is maintained
+                    3. Word limit is strictly observed
+                    4. Key findings are highlighted
+                    5. Empty fields use null instead of empty string""" + content
+
+@shared_task()
+def generate_analysis_prompt(content:str):
+    return """Act as an expert academic research reviewer. Analyze the following paper comprehensively and provide me a structured analysis in JSON format.
+
+                1. First provide me detailed analysis of following error categories:
+                    Focus on these key error categories:
+
+                    1). Mathematical and Calculation Analysis:
+                    - Mathematical equations and formulas
+                    - Statistical analyses and computations
+                    - Data processing and numerical results
+                    - Unit conversions and measurements
+
+                    2). Methodological Issues:
+                    - Research design and methodology
+                    - Sampling procedures and sample size
+                    - Data collection methods
+                    - Control measures
+                    - Variable operationalization
+
+                    3). Logical Framework:
+                    - Theoretical foundations
+                    - Argument structure and flow
+                    - Causal relationships
+                    - Hypothesis formulation
+                    - Conclusions validity
+
+                    4). Data Analysis:
+                    - Statistical test appropriateness
+                    - Results interpretation
+                    - Data visualization
+                    - Significance testing
+                    - Effect size reporting
+
+                    5). Technical Presentation:
+                    - Figure and table accuracy
+                    - Formatting consistency
+                    - Citation accuracy
+                    - Writing clarity
+                    - Structural organization
+
+                    6). Research Quality:
+                    - Internal/external validity
+                    - Reliability measures
+                    - Methodological bias
+                    - Ethical considerations
+                    - Replicability
+
+                    For each error found, provide:
+                    - Clear error description
+                    - Severity rating (high/medium/low)
+                    - Specific text location
+                    - Improvement recommendation
+                    - Reference to academic standards
+
+                2. Then provide me a comprehensive summary including:
+                    - Total error count
+                    - Major concerns
+                    - Improvement priorities
+                    - Overall quality assessment
+                    - Quality score (1-10)
+
+                Must provide all 6 error categories.(if the error count is zero) Return BOTH sections in this exact JSON structure:
+                {
+                    "analysis": [
+                        {
+                            "type": "category_name",
+                            "findings": [
+                                {
+                                    "error": "specific error title",
+                                    "explanation": "detailed description",
+                                    "solution": "recommended fix",
+                                    "location": "where in the paper",
+                                    "severity": "high/medium/low"
+                                }
+                            ],
+                            "counts": "number_of_errors"
+                        }
+                    ],
+                    "summary": {
+                        "total_errors": "total number of errors found",
+                        "major_concerns": [
+                            "list of most critical issues requiring immediate attention"
+                        ],
+                        "improvement_priority": [
+                            "prioritized list of what should be fixed first, second, etc."
+                        ],
+                        "overall_assessment": "brief evaluation of paper quality",
+                        "quality_score": "numerical score 1-10"
+                    }
+                }
+
+                Analyze this paper: """ + content
