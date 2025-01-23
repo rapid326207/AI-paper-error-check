@@ -9,7 +9,7 @@ from .services import (
     validate_pdf, extract_text_safely, process_text_for_rag,
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary
 )
-
+import tiktoken
 
 class PaperViewSet(viewsets.ModelViewSet):
     queryset = Paper.objects.all()
@@ -261,3 +261,13 @@ class PaperViewSet(viewsets.ModelViewSet):
                 return Response(f"Error processing analysis {analysis.id}: {str(e)}")
         
         return Response({"status": "success", "message": "Analysis conversion completed"})
+    
+    @action(detail=True, methods=['get'])
+    def calculate_cost(self, request, pk=None):
+        query = "Do you have a yearly plan?"
+        encoding = tiktoken.encoding_for_model('gpt-4')
+        print(f"Tokens: {len(encoding.encode(query))}")
+        return Response({
+            'status': 'success',
+            'data': {len(encoding.encode(query))}
+        })
