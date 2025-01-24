@@ -2,7 +2,7 @@ from django.db import models
 from django.utils import timezone
 
 class Paper(models.Model):
-    file = models.FileField(upload_to='papers/')
+    file = models.FileField(upload_to='papers/', max_length=255)
     title = models.CharField(max_length=500, blank=True)
     processed = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.now)
