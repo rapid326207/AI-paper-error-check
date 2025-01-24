@@ -34,6 +34,38 @@ def truncate_text(text: str, max_chars: int = 512000) -> str:
     return text[:max_chars].rsplit('. ', 1)[0] + '.'
 
 
+def clean_text(self, text):
+    """Clean text by escaping special characters for JSON"""
+    if isinstance(text, str):
+        # Replace backslashes with double backslashes
+        text = text.replace('\\', '\\\\')
+        # Escape other special characters
+        text = json.dumps(text)[1:-1]
+    return text
+
+def clean_and_validate_json(text):
+    """Helper function to clean and validate JSON response"""
+    # Remove any markdown formatting
+    if isinstance(text, str):
+        text = text.replace('\\', '\\\\')
+        text = json.dumps(text)[1:-1]
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+    
+    # Try to parse and format JSON properly
+    try:
+        # Parse JSON to validate structure
+        parsed = json.loads(text)
+        # Re-serialize to ensure proper formatting
+        return json.dumps(parsed)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON validation error: {str(e)}")
+        raise Exception(f"Invalid JSON response: {str(e)}")
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 @shared_task()
 def analyze_with_openai(text_chunk):
@@ -278,8 +310,12 @@ def analyze_paper_comprehensive(text: str):
     )
     
     content = response.choices[0].message.content
+    print(content)
+    print('//////////////////////////////////000000000000000000000000000000000000000000////////////////////////////////////////////')
     if content.startswith("```json") and content.endswith("```"):
         content = content[7:-3].strip()
+    print(content)
+    print('//////////////////////////////////444444444444444444444444444444444444444444////////////////////////////////////////////')
     return json.loads(content)
 
 @shared_task()
@@ -294,9 +330,11 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
             return existing_analysis.analysis_data
         
         # Perform the analysis
+        print('//////////////////////////////////1111111111111111111111111111111111111111////////////////////////////////////////////')
         analysis_result = analyze_paper_comprehensive(text)
+        print('//////////////////////////////////2222222222222222222222222222222222222222////////////////////////////////////////////')
         analysis_result["metadata"] = metadata
-        
+        print('//////////////////////////////////3333333333333333333333333333333333333333////////////////////////////////////////////')
         # Save the analysis result
         paper_analysis = PaperAnalysis.objects.create(
             paper = paper,
@@ -430,7 +468,8 @@ def generate_paper_summary(content: str, metadata: dict):
         if result.startswith("```json") and result.endswith("```"):
             result = result[7:-3].strip()
         
-        summary_result = json.loads(result)
+        cleaned_result = clean_and_validate_json(result)
+        summary_result = json.loads(cleaned_result)
         
         # Save the summary
         paper_summary = PaperSummary.objects.create(

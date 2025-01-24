@@ -157,6 +157,9 @@ class PaperViewSet(viewsets.ModelViewSet):
                 results.append({
                     'id': paper.id,
                     'title': paper.title,
+                    'input_tokens': paper.input_tokens,
+                    'output_tokens': paper.output_tokens,
+                    'total_cost': paper.total_cost,
                     'paperSummary': PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data,
                     'paperAnalysis': PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data,
                 })

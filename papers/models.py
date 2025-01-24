@@ -3,7 +3,7 @@ from django.utils import timezone
 
 class Paper(models.Model):
     file = models.FileField(upload_to='papers/')
-    title = models.CharField(max_length=255)
+    title = models.CharField(max_length=500, blank=True)
     processed = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
