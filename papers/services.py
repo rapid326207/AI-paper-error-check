@@ -14,6 +14,7 @@ from docx2python import docx2python
 import tiktoken
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 # Initialize clients
 OPENAI_API_KEY = "sk-proj...."
@@ -42,30 +43,7 @@ def clean_text(self, text):
         # Escape other special characters
         text = json.dumps(text)[1:-1]
     return text
-
-def clean_and_validate_json(text):
-    """Helper function to clean and validate JSON response"""
-    # Remove any markdown formatting
-    if isinstance(text, str):
-        text = text.replace('\\', '\\\\')
-        text = json.dumps(text)[1:-1]
-    if text.startswith("```json"):
-        text = text[7:]
-    if text.endswith("```"):
-        text = text[:-3]
-    text = text.strip()
     
-    # Try to parse and format JSON properly
-    try:
-        # Parse JSON to validate structure
-        parsed = json.loads(text)
-        # Re-serialize to ensure proper formatting
-        return json.dumps(parsed)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON validation error: {str(e)}")
-        raise Exception(f"Invalid JSON response: {str(e)}")
-
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 @shared_task()
 def analyze_with_openai(text_chunk):
@@ -209,7 +187,7 @@ def analyze_chunks(chunks: list[dict], stored_data: dict) -> str:
 
 @shared_task()
 def analyze_paper_comprehensive(text: str):
-    response = client.chat.completions.create(
+    o1_response = client.chat.completions.create(
         model="o1-preview",
         messages=[
             {
@@ -305,18 +283,25 @@ def analyze_paper_comprehensive(text: str):
                 }
 
                 Analyze this paper: """ + text
-            }
+            },
+     
         ]
     )
+    o1_response_content = o1_response.choices[0].message.content
+    response = client.beta.chat.completions.parse(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "user", 
+                "content": f"""
+                Given the following data, format it with the given response format: {o1_response_content}
+                """
+            }
+        ],
+        response_format={"type":"json_object"},
+    )
     
-    content = response.choices[0].message.content
-    print(content)
-    print('//////////////////////////////////000000000000000000000000000000000000000000////////////////////////////////////////////')
-    if content.startswith("```json") and content.endswith("```"):
-        content = content[7:-3].strip()
-    print(content)
-    print('//////////////////////////////////444444444444444444444444444444444444444444////////////////////////////////////////////')
-    return json.loads(content)
+    return response.choices[0].message.content
 
 @shared_task()
 def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
@@ -330,11 +315,8 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
             return existing_analysis.analysis_data
         
         # Perform the analysis
-        print('//////////////////////////////////1111111111111111111111111111111111111111////////////////////////////////////////////')
         analysis_result = analyze_paper_comprehensive(text)
-        print('//////////////////////////////////2222222222222222222222222222222222222222////////////////////////////////////////////')
         analysis_result["metadata"] = metadata
-        print('//////////////////////////////////3333333333333333333333333333333333333333////////////////////////////////////////////')
         # Save the analysis result
         paper_analysis = PaperAnalysis.objects.create(
             paper = paper,
@@ -381,7 +363,7 @@ def generate_paper_summary(content: str, metadata: dict):
             return existing_summary.summary_data
             
         # Generate the summary
-        response = client.chat.completions.create(
+        o1_response = client.chat.completions.create(
             model="o1-preview",
             messages=[
                 {
@@ -420,7 +402,22 @@ def generate_paper_summary(content: str, metadata: dict):
                     - Validation approaches
                     - Technical limitations
 
-                    Format response as JSON:
+                    Guidelines for summaries:
+                    1. Basic: Use analogies and real-world examples, avoid jargon
+                    2. Intermediate: Balance technical accuracy with accessibility
+                    3. Expert: Maintain technical rigor while being concise
+                    4. Each summary must not exceed 250 words
+                    5. Include essential information without redundancy
+                    6. Use proper scientific writing style appropriate for each level
+
+                    Ensure:
+                    1. Summaries are clear and well-structured
+                    2. Technical accuracy is maintained
+                    3. Word limit is strictly observed
+                    4. Key findings are highlighted
+                    5. Empty fields use null instead of empty string
+
+                    Return only as a JSON with the following format :
                     {
                         "metadata": {
                             "authors": "["author1 (affiliation)", "author2 (affiliation)", ...]",
@@ -444,33 +441,25 @@ def generate_paper_summary(content: str, metadata: dict):
                             "validation_quality": "1-10",
                             "technical_depth": "1-10"
                         }
-                    }
-
-                    Guidelines for summaries:
-                    1. Basic: Use analogies and real-world examples, avoid jargon
-                    2. Intermediate: Balance technical accuracy with accessibility
-                    3. Expert: Maintain technical rigor while being concise
-                    4. Each summary must not exceed 250 words
-                    5. Include essential information without redundancy
-                    6. Use proper scientific writing style appropriate for each level
-
-                    Ensure:
-                    1. Summaries are clear and well-structured
-                    2. Technical accuracy is maintained
-                    3. Word limit is strictly observed
-                    4. Key findings are highlighted
-                    5. Empty fields use null instead of empty string"""
+                    }"""
                 },
                 {"role": "user", "content": content}
             ]
-        )        
-        result = response.choices[0].message.content
-        if result.startswith("```json") and result.endswith("```"):
-            result = result[7:-3].strip()
-        
-        cleaned_result = clean_and_validate_json(result)
-        summary_result = json.loads(cleaned_result)
-        
+        )
+        o1_response_content = o1_response.choices[0].message.content
+        response = client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user", 
+                    "content": f"""
+        Given the following data, format it with the given response format: {o1_response_content}
+        """
+                }
+            ],
+            response_format={"type":"json_object"},
+        )
+        summary_result = response.choices[0].message.content
         # Save the summary
         paper_summary = PaperSummary.objects.create(
             paper=paper,
