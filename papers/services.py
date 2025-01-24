@@ -294,7 +294,7 @@ def analyze_paper_comprehensive(text: str):
             {
                 "role": "user", 
                 "content": f"""
-                Given the following data, format it with the given response format: {o1_response_content}
+                Given the following data, please format it as a JSON object following the specified response format: {o1_response_content}
                 """
             }
         ],
@@ -452,9 +452,11 @@ def generate_paper_summary(content: str, metadata: dict):
             messages=[
                 {
                     "role": "user", 
-                    "content": f"""
-        Given the following data, format it with the given response format: {o1_response_content}
-        """
+                    "content": f"""  
+                        Given the following data, please format it as a JSON object following the specified response format:  
+
+                        {o1_response_content}  
+                        """  
                 }
             ],
             response_format={"type":"json_object"},
@@ -478,6 +480,7 @@ def generate_paper_summary(content: str, metadata: dict):
         raise Exception("Paper not found")
     except Exception as e:
         logger.error(f"Summary generation error: {str(e)}")
+        logger.error("Response Content:", result)  
         raise Exception(str(e))
 
 @shared_task()
