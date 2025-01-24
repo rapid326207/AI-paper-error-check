@@ -301,7 +301,7 @@ def analyze_paper_comprehensive(text: str):
         response_format={"type":"json_object"},
     )
     
-    return response.choices[0].message.content
+    return json.loads(response.choices[0].message.content)
 
 @shared_task()
 def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
@@ -360,7 +360,7 @@ def generate_paper_summary(content: str, metadata: dict):
         # Check if summary already exists
         if paper.has_summary:
             existing_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at')
-            return existing_summary.summary_data
+            return json.loads(existing_summary.summary_data)
             
         # Generate the summary
         o1_response = client.chat.completions.create(
@@ -459,7 +459,8 @@ def generate_paper_summary(content: str, metadata: dict):
             ],
             response_format={"type":"json_object"},
         )
-        summary_result = response.choices[0].message.content
+        result = response.choices[0].message.content
+        summary_result = json.loads(result)
         # Save the summary
         paper_summary = PaperSummary.objects.create(
             paper=paper,
@@ -471,7 +472,7 @@ def generate_paper_summary(content: str, metadata: dict):
         paper.has_summary = True  # Add this field to Paper model if needed
         paper.save()
         
-        return summary_result
+        return 
     except Paper.DoesNotExist:
         logger.error(f"Paper with ID {metadata.get('paper_id')} not found")
         raise Exception("Paper not found")
