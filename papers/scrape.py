@@ -150,6 +150,8 @@ def CheckPaper(pdf_path: str):
             "file_path": new_path
         }
         summary = generate_paper_summary(content_to_analyze, document_metadata)
+        paper.has_summary = True
+        paper.file.name = new_path
         paper.title = summary['metadata']['title']
         paper.save()
         analyze_with_orchestrator(content_to_analyze, document_metadata)
