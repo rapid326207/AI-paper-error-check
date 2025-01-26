@@ -12,12 +12,14 @@ from papers.models import Paper, PaperAnalysis, PaperSummary
 from django.utils import timezone
 from docx2python import docx2python
 import tiktoken
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
+load_dotenv()
 
 # Initialize clients
-OPENAI_API_KEY = "sk-proj...."
+OPENAI_API_KEY = os.getenv('OPENAI_KEY', 'sk-proj....')
 
 client = OpenAI(
     api_key=OPENAI_API_KEY, 
@@ -360,7 +362,7 @@ def generate_paper_summary(content: str, metadata: dict):
         # Check if summary already exists
         if paper.has_summary:
             existing_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at')
-            return json.loads(existing_summary.summary_data)
+            return existing_summary.summary_data
             
         # Generate the summary
         o1_response = client.chat.completions.create(
@@ -474,7 +476,7 @@ def generate_paper_summary(content: str, metadata: dict):
         paper.has_summary = True  # Add this field to Paper model if needed
         paper.save()
         
-        return 
+        return summary_result
     except Paper.DoesNotExist:
         logger.error(f"Paper with ID {metadata.get('paper_id')} not found")
         raise Exception("Paper not found")

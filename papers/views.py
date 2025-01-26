@@ -9,8 +9,11 @@ from .services import (
     validate_pdf, extract_text_safely, process_text_for_rag, openai_api_calculate_cost,
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, generate_summary_prompt
 )
+from .scrape import process_arxiv_paper
+
 import tiktoken
 from django.conf import settings
+import arxivscraper
 import os
 
 class PaperViewSet(viewsets.ModelViewSet):
@@ -20,7 +23,6 @@ class PaperViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         try:
-            print(request)
             pdf_file = request.FILES.get('file')
             if not pdf_file:
                 return Response({'error': 'No PDF file provided'}, status=status.HTTP_400_BAD_REQUEST)
@@ -295,7 +297,24 @@ class PaperViewSet(viewsets.ModelViewSet):
         return Response({
             'status': 'success',
         })
-            
+
+    @action(detail=False, methods=['get'])
+    def scrape_papers(self, request, pk=None):
+        category = request.query_params.get('category', "physics:nucl-ex")
+        date_from = request.query_params.get('date_from', "2025-01-20")
+        date_until = request.query_params.get('date_until', "2025-01-25")
+        scraper = arxivscraper.Scraper(category = category, date_from = date_from, date_until = date_until)
+        results = scraper.scrape()                    
+        return Response({
+            'status': 'success',
+            'data': results
+        })
+    
+    @action(detail=False, methods=['get'])
+    def process_paper(self, request, pk=None):
+        paper_id = request.query_params.get('id', "2101.00001")
+        process_arxiv_paper(paper_id)
         return Response({
             'status': 'success',
         })
+
