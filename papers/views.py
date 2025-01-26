@@ -42,28 +42,29 @@ class PaperViewSet(viewsets.ModelViewSet):
     def check_paper(self, request, pk=None):
         document = self.get_object()
         try:
-            # Validate PDF
-            is_valid, error = validate_pdf(document.file.path)
-            if not is_valid:
-                return Response(
-                    {"error": f"Invalid PDF file: {error}"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Extract and analyze text
-            extracted_text = extract_text_safely(document.file.path)
-            text_length = len(extracted_text)
             document_metadata = {
                 "title": document.title,
                 "paper_id": document.id,
                 "file_path": document.file.path
             }
-            if text_length > 512000:
-          
-                chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
-                content_to_analyze = analyze_chunks(chunks, vectorstore)
-            else:
-                content_to_analyze = extracted_text
+            content_to_analyze = ""
+            if not document.has_analysis:
+                is_valid, error = validate_pdf(document.file.path)
+                if not is_valid:
+                    return Response(
+                        {"error": f"Invalid PDF file: {error}"}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                # Extract and analyze text
+                extracted_text = extract_text_safely(document.file.path)
+                text_length = len(extracted_text)
+                
+                if text_length > 512000:
+            
+                    chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
+                    content_to_analyze = analyze_chunks(chunks, vectorstore)
+                else:
+                    content_to_analyze = extracted_text
 
             # Generate summary
             analysis_result = analyze_with_orchestrator(content_to_analyze, document_metadata)
@@ -86,28 +87,29 @@ class PaperViewSet(viewsets.ModelViewSet):
         document = self.get_object()
         try:
             # Validate PDF
-            is_valid, error = validate_pdf(document.file.path)
-            if not is_valid:
-                return Response(
-                    {"error": f"Invalid PDF file: {error}"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Extract and analyze text
-            extracted_text = extract_text_safely(document.file.path)
-            text_length = len(extracted_text)
             document_metadata = {
                 "title": document.title,
                 "paper_id": document.id,
                 "file_path": document.file.path
             }
+            content_to_analyze = ""
+            if not document.has_summary:
+                is_valid, error = validate_pdf(document.file.path)
+                if not is_valid:
+                    return Response(
+                        {"error": f"Invalid PDF file: {error}"}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
-            if text_length > 512000:
-                chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
-                content_to_analyze = analyze_chunks(chunks, vectorstore)
-            else:
-                content_to_analyze = extracted_text
+                # Extract and analyze text
+                extracted_text = extract_text_safely(document.file.path)
+                text_length = len(extracted_text)
 
+                if text_length > 512000:
+                    chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
+                    content_to_analyze = analyze_chunks(chunks, vectorstore)
+                else:
+                    content_to_analyze = extracted_text
             # Generate summary
             summary = generate_paper_summary(content_to_analyze, document_metadata)
             return Response({
