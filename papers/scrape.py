@@ -160,4 +160,4 @@ def CheckPaper(pdf_path: str):
             {"error": str(e)}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-    pass 
+    return document_metadata

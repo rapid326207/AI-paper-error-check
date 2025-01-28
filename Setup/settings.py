@@ -95,6 +95,14 @@ DATABASES = {
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
+AWS_ACCESS_KEY_ID = os.get_env('AWS_ACCESS_KEY_ID', 'AKI....')
+AWS_SECRET_ACCESS_KEY = os.get_env('AWS_SECRET_ACCESS_KEY', '1y5....')
+AWS_STORAGE_BUCKET_NAME = 'devai-s3.nobleblocks.com'
+AWS_S3_REGION_NAME = 'US' 
+AWS_S3_CUSTOM_DOMAIN = '%s.s3.amazonaws.com' % AWS_STORAGE_BUCKET_NAME
+AWS_S3_FILE_OVERWRITE = False
+
+
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:8000",

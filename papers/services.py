@@ -10,8 +10,11 @@ from papers.utils.rag import RAGProcessor
 from celery import shared_task
 from papers.models import Paper, PaperAnalysis, PaperSummary
 from django.utils import timezone
+from django.conf import settings
 from docx2python import docx2python
 import tiktoken
+import boto3
+
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -528,6 +531,13 @@ def openai_api_calculate_cost(prompt_tokens, completion_tokens, total_tokens, mo
 
     return total_cost
 
+@shared_task()
+def download_s3_file(bucket_name:str, object_key:str,  download_path:str):
+    s3 = boto3.client('s3', aws_access_key_id=settings.AWS_ACCESS_KEY_ID , aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY)
+    s3.download_file(bucket_name, object_key, download_path)
+    return download_path
+    
+    
 @shared_task()
 def generate_summary_prompt(content:str):
     return """As a scientific paper analysis expert, extract and analyze the following with high precision:

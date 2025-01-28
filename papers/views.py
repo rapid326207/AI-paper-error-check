@@ -7,10 +7,10 @@ from .models import Paper, PaperSummary, PaperAnalysis
 from .serializers import PaperSerializer
 from .services import (
     validate_pdf, extract_text_safely, process_text_for_rag, openai_api_calculate_cost,
-    analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, generate_summary_prompt
+    analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
-from .scrape import process_arxiv_paper
-
+from .scrape import process_arxiv_paper, CheckPaper
+import logging  
 import tiktoken
 from django.conf import settings
 import arxivscraper
@@ -321,3 +321,32 @@ class PaperViewSet(viewsets.ModelViewSet):
             'status': 'success',
         })
 
+    @action(detail=False, methods=['get'])
+    def process_s3_paper(self, request, pk=None):
+        s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
+        object_key = s3_paper.split(settings.AWS_STORAGE_BUCKET_NAME)[1][1:]
+        filename = os.path.basename(object_key)
+        temp_file_path = os.path.join('media/papers', filename)
+        download_s3_file(settings.AWS_STORAGE_BUCKET_NAME, object_key, temp_file_path)
+        document_metadata = CheckPaper(temp_file_path)
+        if os.path.exists(temp_file_path):  
+            try:  
+                os.remove(temp_file_path)  
+                logging.info(f"Deleted PDF: {temp_file_path}")  
+                print(f"Deleted PDF: {temp_file_path}")  
+            except Exception as e:  
+                logging.error(f"Error deleting PDF {temp_file_path}: {e}")  
+                print(f"Error deleting PDF {temp_file_path}: {e}")  
+        paper = Paper.objects.filter(id=document_metadata['paper_id']).first()
+
+        return Response({
+            'status': 'success',
+            'pdf_path': temp_file_path,
+            'id': paper.id,
+            'title': paper.title,
+            'input_tokens': paper.input_tokens,
+            'output_tokens': paper.output_tokens,
+            'total_cost': paper.total_cost,
+            'paperSummary': PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data,
+            'paperAnalysis': PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data,
+        })
