@@ -166,6 +166,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                     'total_cost': paper.total_cost,
                     'paperSummary': PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data,
                     'paperAnalysis': PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data,
+                    'result_id': PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').id,
                 })
 
             return Response({
@@ -187,7 +188,7 @@ class PaperViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def get_statistics(self,request,pk=None):
         try:
-            papers = Paper.objects.all()
+            papers = Paper.objects.filter(has_summary=True, has_analysis=True)
             total_papers = papers.count()
             total_analyses = PaperAnalysis.objects.count()
             analysis_results = PaperAnalysis.objects.all()
