@@ -45,7 +45,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             document_metadata = {
                 "title": document.title,
                 "paper_id": document.id,
-                "file_path": document.file.path
+                "file_path": document.file.path if document.file else None
             }
             content_to_analyze = ""
             if not document.has_analysis:
@@ -90,7 +90,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             document_metadata = {
                 "title": document.title,
                 "paper_id": document.id,
-                "file_path": document.file.path
+                "file_path": document.file.path if document.file else None
             }
             content_to_analyze = ""
             if not document.has_summary:
