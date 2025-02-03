@@ -2,13 +2,15 @@ from openai import OpenAI
 import os
 import fitz
 import PyPDF2
+from PyPDF2 import PdfReader
 import json
+from io import BytesIO
 from typing import Dict, List, Tuple
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
 from papers.utils.rag import RAGProcessor
 from celery import shared_task
-from papers.models import Paper, PaperAnalysis, PaperSummary
+from papers.models import Paper, PaperAnalysis, PaperSummary, PaperSpeech
 from django.utils import timezone
 from django.conf import settings
 from docx2python import docx2python
@@ -22,14 +24,18 @@ logging.basicConfig(level=logging.DEBUG)
 load_dotenv()
 
 # Initialize clients
-OPENAI_API_KEY = os.getenv('OPENAI_KEY', 'sk-proj....')
-
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'sk-proj....')
 client = OpenAI(
     api_key=OPENAI_API_KEY, 
     timeout=240.0,
     max_retries=3
 )
-
+s3 = boto3.client(
+    's3',
+    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+    region_name=settings.AWS_S3_REGION_NAME
+)
 rag_processor = RAGProcessor(OPENAI_API_KEY)
 
 
@@ -113,50 +119,33 @@ def validate_pdf(file_path):
 def extract_text_safely(file_path):
     """Extract text from PDF using multiple methods"""
     text_chunks = []
-    file_ext = os.path.splitext(file_path)[1].lower()
+    filename, file_ext = os.path.splitext(file_path)
 
-    try:
-        # Try PyMuPDF first
-        if file_ext == '.pdf':
-            doc = fitz.open(file_path)
-            for page in doc:
-                try:
-                    text = page.get_text()
-                    text_chunks.append(text)
-                except Exception as e:
-                    text_chunks.append(f"[Error extracting page {page.number + 1}]")
-            doc.close()
-            
-        # Handle DOCX files    
-        elif file_ext == '.docx':
-            with docx2python(file_path) as docx_content:
-                text_chunks.append(docx_content.text)
-                
-        else:
-            raise ValueError(f"Unsupported file format: {file_ext}")
-            
-        return ' '.join(text_chunks)
-    except Exception as e:
-        # Fallback to PyPDF2
+    response = s3.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key="papers/"+file_path)
+    content = response['Body'].read()
+    file_content = BytesIO(content)
+
+    if file_ext == '.pdf':
         try:
-            with open(file_path, 'rb') as file:
-                pdf = PyPDF2.PdfReader(file)
-                for i, page in enumerate(pdf.pages):
-                    try:
-                        text = page.extract_text()
-                        if text.strip():
-                            text_chunks.append(text)
-                        else:
-                            text_chunks.append(f"[Empty page {i + 1}]")
-                    except Exception as page_error:
-                        text_chunks.append(f"[Error extracting page {i + 1}]")
-        except Exception as pdf_error:
-            raise Exception(f"Failed to extract text: {str(pdf_error)}")
-    
-    if not text_chunks:
-        raise Exception("No text could be extracted from the PDF")
-    
-    return "\n".join(text_chunks)
+            # Read PDF content
+            reader = PdfReader(file_content)
+            for page in reader.pages:
+                text_chunks.append(page.extract_text())
+
+        except Exception as e:
+            # Handle exceptions (e.g., file not found, access denied)
+            print(f"Error reading PDF from S3: {e}")
+            return None
+        
+    # Handle DOCX files    
+    elif file_ext == '.docx':
+        with docx2python(file_content) as docx_content:
+            text_chunks.append(docx_content.text)
+            
+    else:
+        raise ValueError(f"Unsupported file format: {file_ext}")
+        
+    return ' '.join(text_chunks)
 
 @shared_task()
 def process_text_for_rag(text: str, document_metadata: dict) -> tuple[list[dict], dict]:
@@ -533,11 +522,98 @@ def openai_api_calculate_cost(prompt_tokens, completion_tokens, total_tokens, mo
 
 @shared_task()
 def download_s3_file(bucket_name:str, object_key:str,  download_path:str):
-    s3 = boto3.client('s3', aws_access_key_id=settings.AWS_ACCESS_KEY_ID , aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY)
     s3.download_file(bucket_name, object_key, download_path)
     return download_path
-    
-    
+
+@shared_task()
+def text_to_speech(text, output_file="output.mp3"):
+    response = client.audio.speech.create(
+        model="tts-1",
+        voice="alloy",
+        input=text,
+    )
+    response.stream_to_file(output_file)
+    return output_file
+
+
+@shared_task()
+def generate_speech_task(speech_id):
+    try:
+        # Get the speech object
+
+        speech = PaperSpeech.objects.get(id=speech_id)
+        # Check if already processed
+        if speech.status == 'completed':
+            logger.warning(f"Speech {speech_id} already completed")
+            return
+
+        speech.status = 'processing'
+        speech.save(update_fields=['status'])
+        # Get the source text
+        source_text = speech.content_source
+        if not source_text:
+            raise ValueError("No source text available for speech generation")
+
+        # Generate speech with OpenAI
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice=speech.voice_type,
+            input=source_text,
+            response_format="mp3"
+        )
+        # Create in-memory audio file
+        audio_buffer = BytesIO(response.content)
+
+        # Upload to S3
+
+        timestamp = int(timezone.now().timestamp())
+        s3_key = f"speeches/{speech_id}_audio_{timestamp}.mp3"
+        
+        s3.upload_fileobj(
+            audio_buffer,
+            settings.AWS_STORAGE_BUCKET_NAME,
+            s3_key,
+            ExtraArgs={
+                'ContentType': 'audio/mpeg',
+                'ACL': 'private'
+            }
+        )
+
+        # Generate presigned URL (1 week expiration)
+        presigned_url = s3.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+                'Key': s3_key
+            },
+            ExpiresIn=604800  # 7 days
+        )
+
+        # Calculate cost (OpenAI charges $0.015 per 1,000 characters for TTS-1)
+        char_count = len(source_text)
+        cost = (char_count / 1000) * 0.015
+        # Update speech object
+        speech.audio_file = s3_key
+        speech.input_tokens = char_count
+        speech.generation_cost = cost
+        speech.status = 'completed'
+        speech.error_message = None
+        speech.save()
+
+        logger.info(f"Successfully generated speech {speech_id}")
+        return [presigned_url, cost]
+
+    except PaperSpeech.DoesNotExist:
+        logger.error(f"Speech {speech_id} not found")
+        raise
+    except Exception as e:
+        logger.error(f"Error generating speech {speech_id}: {str(e)}")
+        if speech:
+            speech.status = 'failed'
+            speech.error_message = str(e)
+            speech.save(update_fields=['status', 'error_message'])
+        raise  # Re-raise for Celery retry
+
 @shared_task()
 def generate_summary_prompt(content:str):
     return """As a scientific paper analysis expert, extract and analyze the following with high precision:

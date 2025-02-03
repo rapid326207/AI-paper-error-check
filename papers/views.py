@@ -3,10 +3,11 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import action
-from .models import Paper, PaperSummary, PaperAnalysis
+from django.http import JsonResponse
+from .models import Paper, PaperSummary, PaperAnalysis, PaperSpeech
 from .serializers import PaperSerializer
 from .services import (
-    validate_pdf, extract_text_safely, process_text_for_rag, openai_api_calculate_cost,
+    validate_pdf, extract_text_safely, process_text_for_rag, openai_api_calculate_cost, text_to_speech,
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
 from .scrape import process_arxiv_paper, CheckPaper
@@ -45,27 +46,20 @@ class PaperViewSet(viewsets.ModelViewSet):
             document_metadata = {
                 "title": document.title,
                 "paper_id": document.id,
-                "file_path": document.file.path if document.file else None
+                "file_path": document.file.name
             }
             content_to_analyze = ""
             if not document.has_analysis:
-                is_valid, error = validate_pdf(document.file.path)
-                if not is_valid:
-                    return Response(
-                        {"error": f"Invalid PDF file: {error}"}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+
                 # Extract and analyze text
-                extracted_text = extract_text_safely(document.file.path)
+                extracted_text = extract_text_safely(document.file.name)
                 text_length = len(extracted_text)
-                
+
                 if text_length > 512000:
-            
                     chunks, vectorstore = process_text_for_rag(extracted_text, document_metadata)
                     content_to_analyze = analyze_chunks(chunks, vectorstore)
                 else:
                     content_to_analyze = extracted_text
-
             # Generate summary
             analysis_result = analyze_with_orchestrator(content_to_analyze, document_metadata)
 
@@ -90,19 +84,13 @@ class PaperViewSet(viewsets.ModelViewSet):
             document_metadata = {
                 "title": document.title,
                 "paper_id": document.id,
-                "file_path": document.file.path if document.file else None
+                "file_path": document.file.name
             }
             content_to_analyze = ""
             if not document.has_summary:
-                is_valid, error = validate_pdf(document.file.path)
-                if not is_valid:
-                    return Response(
-                        {"error": f"Invalid PDF file: {error}"}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
 
                 # Extract and analyze text
-                extracted_text = extract_text_safely(document.file.path)
+                extracted_text = extract_text_safely(document.file.name)
                 text_length = len(extracted_text)
 
                 if text_length > 512000:
@@ -139,11 +127,12 @@ class PaperViewSet(viewsets.ModelViewSet):
                 'logical_framework_errors',  
                 'data_analysis_errors',  
                 'technical_presentation_errors',  
-                'research_quality_errors',  
+                'research_quality_errors',
+                'analyzed_at',
             ]  
             
             if sort_by not in allowed_sort_fields:  
-                sort_by = 'total_errors'  # Fallback to default if invalid  
+                sort_by = 'analyzed_at'  # Fallback to default if invalid  
                 
             if order == 'asc':  
                 order_prefix = ''  
@@ -278,13 +267,6 @@ class PaperViewSet(viewsets.ModelViewSet):
         encoding = tiktoken.encoding_for_model('gpt-4')
         for paper in papers:
             full_path = (os.path.join(settings.MEDIA_ROOT, str(paper.file)))
-            is_valid, error = validate_pdf(full_path)
-            if not is_valid:
-                return Response(
-                    {"error": f"Invalid PDF file: {error}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
             # Extract and analyze text
             extracted_text = extract_text_safely(full_path)
             summary_prompt = generate_analysis_prompt(extracted_text)
@@ -324,10 +306,10 @@ class PaperViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def process_s3_paper(self, request, pk=None):
         s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
-        object_key = s3_paper.split(settings.AWS_STORAGE_BUCKET_NAME)[1][1:]
+        object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
         filename = os.path.basename(object_key)
         temp_file_path = os.path.join('media/papers', filename)
-        download_s3_file(settings.AWS_STORAGE_BUCKET_NAME, object_key, temp_file_path)
+        download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
         document_metadata = CheckPaper(temp_file_path)
         if os.path.exists(temp_file_path):  
             try:  
@@ -349,4 +331,28 @@ class PaperViewSet(viewsets.ModelViewSet):
             'total_cost': paper.total_cost,
             'paperSummary': PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data,
             'paperAnalysis': PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data,
+        })
+
+    @action(detail=True, methods=['get'])
+    def generate_speech(self, request, pk=None):
+        document = self.get_object()
+        voice_type = request.query_params.get('voice_type', 'alloy')
+        speech_type = request.query_params.get('speech_type', PaperSpeech.SPEECH_TYPE_CHILD_SUMMARY)
+        text = request.query_params.get('text', "Researchers have discovered that everyday plastic items in our homes, such as kitchen utensils and toys.")
+        # output = text_to_speech(text)
+        originalSpeech = PaperSpeech.objects.filter(paper=document, content_source=text, speech_type=speech_type, voice_type=voice_type).first()
+        if originalSpeech:
+            return Response({
+                'status': 'success',
+                'text': text,
+                'audio_url': originalSpeech.get_audio_url(),
+                'cost': originalSpeech.generation_cost,
+            })
+        data = PaperSpeech.create_for_source(document, text, speech_type, voice_type)
+
+        return Response({
+            'status': 'success',
+            'text': text,
+            'audio_url': data[0],
+            'cost': data[1]
         })
