@@ -98,7 +98,7 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', 'AKI....')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', '1y5....')
 AWS_STORAGE_BUCKET_NAME = 'devai-s3.nobleblocks.com'
-AWS_S3_REGION_NAME = 'US' 
+AWS_S3_REGION_NAME = 'ap-southeast-1' 
 AWS_S3_CUSTOM_DOMAIN = '%s.s3.amazonaws.com' % AWS_STORAGE_BUCKET_NAME
 AWS_S3_FILE_OVERWRITE = False
 

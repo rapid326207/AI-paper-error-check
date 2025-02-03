@@ -311,6 +311,7 @@ class PaperViewSet(viewsets.ModelViewSet):
         temp_file_path = os.path.join('media/papers', filename)
         download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
         document_metadata = CheckPaper(temp_file_path)
+        
         if os.path.exists(temp_file_path):  
             try:  
                 os.remove(temp_file_path)  

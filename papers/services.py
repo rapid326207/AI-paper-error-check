@@ -148,6 +148,54 @@ def extract_text_safely(file_path):
     return ' '.join(text_chunks)
 
 @shared_task()
+def extract_local_file(file_path):
+    """Extract text from PDF using multiple methods"""
+    text_chunks = []
+    file_ext = os.path.splitext(file_path)[1].lower()
+
+    try:
+        # Try PyMuPDF first
+        if file_ext == '.pdf':
+            doc = fitz.open(file_path)
+            for page in doc:
+                try:
+                    text = page.get_text()
+                    text_chunks.append(text)
+                except Exception as e:
+                    text_chunks.append(f"[Error extracting page {page.number + 1}]")
+            doc.close()
+            
+        # Handle DOCX files    
+        elif file_ext == '.docx':
+            with docx2python(file_path) as docx_content:
+                text_chunks.append(docx_content.text)
+                
+        else:
+            raise ValueError(f"Unsupported file format: {file_ext}")
+            
+        return ' '.join(text_chunks)
+    except Exception as e:
+        # Fallback to PyPDF2
+        try:
+            with open(file_path, 'rb') as file:
+                pdf = PyPDF2.PdfReader(file)
+                for i, page in enumerate(pdf.pages):
+                    try:
+                        text = page.extract_text()
+                        if text.strip():
+                            text_chunks.append(text)
+                        else:
+                            text_chunks.append(f"[Empty page {i + 1}]")
+                    except Exception as page_error:
+                        text_chunks.append(f"[Error extracting page {i + 1}]")
+        except Exception as pdf_error:
+            raise Exception(f"Failed to extract text: {str(pdf_error)}")
+    
+    if not text_chunks:
+        raise Exception("No text could be extracted from the PDF")
+    
+    return "\n".join(text_chunks)
+@shared_task()
 def process_text_for_rag(text: str, document_metadata: dict) -> tuple[list[dict], dict]:
     """Process text through RAG pipeline"""
     try:
