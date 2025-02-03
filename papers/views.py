@@ -116,7 +116,7 @@ class PaperViewSet(viewsets.ModelViewSet):
         try:
             page = int(request.query_params.get('page', 1))
             page_size = request.query_params.get('page_size', 3)
-            sort_by = request.query_params.get('sort_by', 'total_errors')
+            sort_by = request.query_params.get('sort_by', 'analyzed_at')
             order = request.query_params.get('order', 'desc')
             start_idx = (page - 1) * page_size
 
