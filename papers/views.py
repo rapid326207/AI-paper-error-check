@@ -7,20 +7,25 @@ from django.http import JsonResponse
 from .models import Paper, PaperSummary, PaperAnalysis, PaperSpeech
 from .serializers import PaperSerializer
 from .services import (
-    validate_pdf, extract_text_safely, process_text_for_rag, openai_api_calculate_cost, text_to_speech,
+    extract_text_safely, process_text_for_rag, openai_api_calculate_cost, 
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
 from .scrape import process_arxiv_paper, CheckPaper
+from .globals import global_state
 import logging  
 import tiktoken
 from django.conf import settings
 import arxivscraper
+import boto3
 import os
+import pusher
 
 class PaperViewSet(viewsets.ModelViewSet):
     queryset = Paper.objects.all()
     serializer_class = PaperSerializer
     parser_classes = (MultiPartParser, FormParser)
+
+    global current_paper_being_checked 
 
     def create(self, request, *args, **kwargs):
         try:
@@ -31,10 +36,26 @@ class PaperViewSet(viewsets.ModelViewSet):
             # Save file and create document
             serializer = self.get_serializer(data=request.data)
             if serializer.is_valid():
+                s3 = boto3.client(
+                    's3',
+                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    region_name=settings.AWS_S3_REGION_NAME
+                )
                 document = serializer.save()
                 document.processed = False
                 document.save()
-                return Response(serializer.data, status=status.HTTP_201_CREATED)
+                response_data = serializer.data
+                paper_s3_url = s3.generate_presigned_url(
+                    'get_object',
+                    Params={
+                        'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+                        'Key': "papers/" + document.file.name
+                    },
+                    ExpiresIn=604800  # 7 days
+                )                
+                response_data['paper_path'] = paper_s3_url
+                return Response(response_data, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -48,6 +69,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 "paper_id": document.id,
                 "file_path": document.file.name
             }
+            global_state.current_paper = f"{document.title}"
             content_to_analyze = ""
             if not document.has_analysis:
 
@@ -62,12 +84,25 @@ class PaperViewSet(viewsets.ModelViewSet):
                     content_to_analyze = extracted_text
             # Generate summary
             analysis_result = analyze_with_orchestrator(content_to_analyze, document_metadata)
-
+            pusher_client = pusher.Pusher(
+                app_id='1937930',
+                key='0d514904adb1d8e8521e',
+                secret='196ebc1989b14a46cd14',
+                cluster='us3',
+                ssl=True
+            )
+            pusher_client.trigger('my-channel', 'my-event', {'message': f'Paper Check finished. Next paper will be processed momentarily...'})
+            global_state.current_paper = None
             return Response({
                 "status": "success",
                 "analysis": analysis_result['analysis'],
                 "summary": analysis_result['summary'],
-                "metadata": analysis_result['metadata']
+                "metadata": analysis_result['metadata'],
+                "costdata": {
+                    "input_tokens": analysis_result['input_tokens'],
+                    "output_tokens": analysis_result['output_tokens'],
+                    "total_cost": analysis_result['total_cost']
+                }
             })
 
         except Exception as e:
@@ -86,6 +121,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 "paper_id": document.id,
                 "file_path": document.file.name
             }
+            global_state.current_paper = f"{document.title}"
             content_to_analyze = ""
             if not document.has_summary:
 
@@ -357,3 +393,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             'audio_url': data[0],
             'cost': data[1]
         })
+    
+    @action(detail=False, methods=['get'])
+    def get_current_paper_status(self, request, pk=None):
+        return Response({'status': 'success', 'paper':global_state.current_paper})

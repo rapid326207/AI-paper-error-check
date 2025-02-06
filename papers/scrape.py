@@ -149,9 +149,7 @@ def CheckPaper(pdf_path: str):
             "paper_id": paper.id,
             "file_path": new_path
         }
-        print(document_metadata)
         summary = generate_paper_summary(content_to_analyze, document_metadata)
-        print(summary)
         paper.has_summary = True
         paper.file.name = new_path
         paper.title = summary['metadata']['title']

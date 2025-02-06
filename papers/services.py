@@ -16,6 +16,7 @@ from django.conf import settings
 from docx2python import docx2python
 import tiktoken
 import boto3
+import pusher
 
 from dotenv import load_dotenv
 
@@ -37,6 +38,13 @@ s3 = boto3.client(
     region_name=settings.AWS_S3_REGION_NAME
 )
 rag_processor = RAGProcessor(OPENAI_API_KEY)
+pusher_client = pusher.Pusher(
+  app_id='1937930',
+  key='0d514904adb1d8e8521e',
+  secret='196ebc1989b14a46cd14',
+  cluster='us3',
+  ssl=True
+)
 
 
 def truncate_text(text: str, max_chars: int = 512000) -> str:
@@ -44,7 +52,6 @@ def truncate_text(text: str, max_chars: int = 512000) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rsplit('. ', 1)[0] + '.'
-
 
 def clean_text(self, text):
     """Clean text by escaping special characters for JSON"""
@@ -54,7 +61,7 @@ def clean_text(self, text):
         # Escape other special characters
         text = json.dumps(text)[1:-1]
     return text
-    
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 @shared_task()
 def analyze_with_openai(text_chunk):
@@ -351,9 +358,13 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
         # Get the paper object
         paper = Paper.objects.select_related('summaries').get(id=metadata.get('paper_id'))
         encoding = tiktoken.encoding_for_model('gpt-4')
+        pusher_client.trigger('my-channel', 'my-event', {'message': f'Currently checking errors: {metadata.get('title')}'})
         # Check if analysis already exists
         if paper.has_analysis:
             existing_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at')
+            existing_analysis.analysis_data['input_tokens'] = paper.input_tokens
+            existing_analysis.analysis_data['output_tokens'] = paper.output_tokens
+            existing_analysis.analysis_data['total_cost'] = paper.total_cost
             return existing_analysis.analysis_data
         
         # Perform the analysis
@@ -384,7 +395,10 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
         paper.output_tokens = completion_tokens
         paper.total_cost = total_cost
         paper.save()
-        
+        pusher_client.trigger('my-channel', 'my-event', {'message': f'Checking finished: {metadata.get('title')}'})
+        analysis_result['input_tokens'] = prompt_tokens
+        analysis_result['output_tokens'] = completion_tokens
+        analysis_result['total_cost'] = total_cost
         return analysis_result
     except Paper.DoesNotExist:
         logger.error(f"Paper with ID {metadata.get('paper_id')} not found")
@@ -402,8 +416,10 @@ def generate_paper_summary(content: str, metadata: dict):
         # Check if summary already exists
         if paper.has_summary:
             existing_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at')
+            existing_summary.summary_data['metadata']['paper_id'] = metadata.get('paper_id')
             return existing_summary.summary_data
-            
+        
+        pusher_client.trigger('my-channel', 'my-event', {'message': f'Currently generating summary: {metadata.get('title')}'})
         # Generate the summary
         o1_response = client.chat.completions.create(
             model="o1-preview",
@@ -505,6 +521,7 @@ def generate_paper_summary(content: str, metadata: dict):
         )
         result = response.choices[0].message.content
         summary_result = json.loads(result)
+        summary_result['metadata']['paper_id'] = metadata.get('paper_id')
         # Save the summary
         paper_summary = PaperSummary.objects.create(
             paper=paper,
@@ -515,7 +532,7 @@ def generate_paper_summary(content: str, metadata: dict):
         # Update paper status if needed
         paper.has_summary = True  # Add this field to Paper model if needed
         paper.save()
-        
+        pusher_client.trigger('my-channel', 'my-event', {'message': f'Summary generated: {metadata.get('title')}'})
         return summary_result
     except Paper.DoesNotExist:
         logger.error(f"Paper with ID {metadata.get('paper_id')} not found")
@@ -582,7 +599,6 @@ def text_to_speech(text, output_file="output.mp3"):
     )
     response.stream_to_file(output_file)
     return output_file
-
 
 @shared_task()
 def generate_speech_task(speech_id):
