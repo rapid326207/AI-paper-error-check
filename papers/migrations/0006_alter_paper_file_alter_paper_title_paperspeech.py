@@ -27,7 +27,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('speech_type', models.CharField(choices=[('paper_title', 'Paper Title'), ('child_summary', 'Child Summary'), ('college_summary', 'College Summary'), ('phd_summary', 'Phd Summary')], max_length=20)),
-                ('voice_type', models.CharField(choices=[('alloy', 'Alloy'), ('ash', 'Ash'), ('coral', 'Coral'), ('echo', 'Echo'), ('fable', 'Fable'), ('onyx', 'Onyx'), ('nova', 'Nova'), ('sage', 'Sage'), ('shimmer', 'Shimmer')], defaul>
+                ('voice_type', models.CharField(choices=[('alloy', 'Alloy'), ('ash', 'Ash'), ('coral', 'Coral'), ('echo', 'Echo'), ('fable', 'Fable'), ('onyx', 'Onyx'), ('nova', 'Nova'), ('sage', 'Sage'), ('shimmer', 'Shimmer')], default='alloy', max_length=20)),
                 ('audio_file', models.FileField(blank=True, null=True, storage=papers.models.SpeechFileS3Storage, upload_to=papers.models.get_speech_s3_file_path)),
                 ('generated_at', models.DateTimeField(auto_now_add=True)),
                 ('input_tokens', models.BigIntegerField(default=0)),
