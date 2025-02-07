@@ -397,3 +397,12 @@ class PaperViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def get_current_paper_status(self, request, pk=None):
         return Response({'status': 'success', 'paper':global_state.current_paper})
+
+    @action(detail=False, methods=['get'])
+    def verify(self, request, pk=None):
+        password = request.query_params.get('password', '')  # Access the password
+        # Your logic here (e.g., check password validity)
+        if(password == global_state.password) :
+            return JsonResponse({'status': 'success', 'message': 'Password verified'})
+        else :
+            return JsonResponse({'status': 'error', 'message': 'Invalid password'}, status=400)
