@@ -1,5 +1,5 @@
 from rest_framework import viewsets
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import action
@@ -23,7 +23,7 @@ import pusher
 class PaperViewSet(viewsets.ModelViewSet):
     queryset = Paper.objects.all()
     serializer_class = PaperSerializer
-    parser_classes = (MultiPartParser, FormParser)
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     global current_paper_being_checked 
 
@@ -260,7 +260,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
     @action(detail=False, methods=['get'])
     def convert_analysis(self, request, pk=None): 
         analysises = PaperAnalysis.objects.all()
@@ -296,7 +296,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 return Response(f"Error processing analysis {analysis.id}: {str(e)}")
         
         return Response({"status": "success", "message": "Analysis conversion completed"})
-    
+
     @action(detail=False, methods=['get'])
     def calculate_cost(self, request, pk=None):
         papers = Paper.objects.select_related('analysis', 'summaries').all()
@@ -330,7 +330,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             'status': 'success',
             'data': results
         })
-    
+
     @action(detail=False, methods=['get'])
     def process_paper(self, request, pk=None):
         paper_id = request.query_params.get('id', "2101.00001")
@@ -393,11 +393,144 @@ class PaperViewSet(viewsets.ModelViewSet):
             'audio_url': data[0],
             'cost': data[1]
         })
-    
+
     @action(detail=False, methods=['get'])
     def get_current_paper_status(self, request, pk=None):
         return Response({'status': 'success', 'paper':global_state.current_paper})
 
+    @action(detail=False, methods=['get'])
+    def get_results(self, request, pk=None):
+        try:
+            paper_id = self.request.query_params.get('last_id', 1005)
+            papers = Paper.objects.filter(id__gt=paper_id)
+            results = []
+            
+            for paper in papers:
+                try:
+                    # Get latest summary and analysis, handle case when none exist
+                    latest_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at')
+                    latest_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at')
+                    
+                    results.append({
+                        'paper': {
+                            'id': paper.id,
+                            'title': paper.title,
+                            'file': str(paper.file) if paper.file else None,
+                            'input_tokens': paper.input_tokens,
+                            'output_tokens': paper.output_tokens,
+                            'total_cost': paper.total_cost,
+                            'has_summary': paper.has_summary,
+                            'has_analysis': paper.has_analysis,
+                            'processed': paper.processed,
+                            'created_at': paper.created_at.isoformat() if paper.created_at else None,
+                        },
+                        'paperSummary': {
+                            'id': latest_summary.id,
+                            'summary_data': latest_summary.summary_data,
+                            'generated_at': latest_summary.generated_at.isoformat() if latest_summary.generated_at else None,
+                        } if latest_summary else None,
+                        'paperAnalysis': {
+                            'id': latest_analysis.id,
+                            'analysis_data': latest_analysis.analysis_data,
+                            'analyzed_at': latest_analysis.analyzed_at.isoformat() if latest_analysis.analyzed_at else None,
+                            'math_errors': latest_analysis.math_errors,
+                            'methodology_errors': latest_analysis.methodology_errors,
+                            'logical_framework_errors': latest_analysis.logical_framework_errors,
+                            'data_analysis_errors': latest_analysis.data_analysis_errors,
+                            'technical_presentation_errors': latest_analysis.technical_presentation_errors,
+                            'research_quality_errors': latest_analysis.research_quality_errors,
+                            'total_errors': latest_analysis.total_errors,
+                        } if latest_analysis else None,
+                    })
+                except (PaperSummary.DoesNotExist, PaperAnalysis.DoesNotExist):
+                    # Skip papers without summary or analysis
+                    continue
+                    
+            return JsonResponse({
+                'status': 'success',
+                'data': results
+            })
+            
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def store_results(self, request, pk=None):
+        try:
+            data = request.data.get('data', [])
+            stored_results = []
+            
+            for item in data:
+                paper_data = item.get('paper', {})
+                summary_data = item.get('paperSummary', {})
+                analysis_data = item.get('paperAnalysis', {})
+                
+                # Create or update Paper
+                paper, paper_created = Paper.objects.update_or_create(
+                    id=paper_data.get('id'),
+                    defaults={
+                        'title': paper_data.get('title'),
+                        'file': paper_data.get('file'),
+                        'input_tokens': paper_data.get('input_tokens'),
+                        'output_tokens': paper_data.get('output_tokens'),
+                        'total_cost': paper_data.get('total_cost'),
+                        'has_summary': paper_data.get('has_summary'),
+                        'has_analysis': paper_data.get('has_analysis'),
+                        'processed': paper_data.get('processed'),
+                        'created_at': paper_data.get('created_at'),
+                    }
+                )
+                
+                # Create PaperSummary if exists
+                if summary_data:
+                    summary, summary_created = PaperSummary.objects.update_or_create(
+                        id=summary_data.get('id'),
+                        defaults={
+                            'paper': paper,
+                            'summary_data': summary_data.get('summary_data'),
+                            'generated_at': summary_data.get('generated_at'),
+                        }
+                    )
+                
+                # Create PaperAnalysis if exists
+                if analysis_data:
+                    analysis, analysis_created = PaperAnalysis.objects.update_or_create(
+                        id=analysis_data.get('id'),
+                        defaults={
+                            'paper': paper,
+                            'analysis_data': analysis_data.get('analysis_data'),
+                            'analyzed_at': analysis_data.get('analyzed_at'),
+                            'math_errors': analysis_data.get('math_errors', 0),
+                            'methodology_errors': analysis_data.get('methodology_errors', 0),
+                            'logical_framework_errors': analysis_data.get('logical_framework_errors', 0),
+                            'data_analysis_errors': analysis_data.get('data_analysis_errors', 0),
+                            'technical_presentation_errors': analysis_data.get('technical_presentation_errors', 0),
+                            'research_quality_errors': analysis_data.get('research_quality_errors', 0),
+                            'total_errors': analysis_data.get('total_errors', 0),
+                        }
+                    )
+                
+                stored_results.append({
+                    'paper_id': paper.id,
+                    'summary_id': summary.id if summary_data else None,
+                    'analysis_id': analysis.id if analysis_data else None,
+                })
+                
+            return Response({
+                'status': 'success',
+                'message': f'Successfully stored {len(stored_results)} results',
+                'stored_results': stored_results
+            })
+            
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=False, methods=['get'])
     def verify(self, request, pk=None):
         password = request.query_params.get('password', '')  # Access the password
