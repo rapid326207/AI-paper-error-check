@@ -17,6 +17,7 @@ from docx2python import docx2python
 import tiktoken
 import boto3
 import pusher
+import uuid
 
 from dotenv import load_dotenv
 
@@ -677,6 +678,53 @@ def generate_speech_task(speech_id):
             speech.error_message = str(e)
             speech.save(update_fields=['status', 'error_message'])
         raise  # Re-raise for Celery retry
+
+@shared_task()
+def generate_speech(text:str, voice_type: str):
+    try:
+        speech_id = uuid.uuid4()
+
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice=voice_type,
+            input=text,
+            response_format="mp3"
+        )
+        # Create in-memory audio file
+        audio_buffer = BytesIO(response.content)
+
+        # Upload to S3
+
+        timestamp = int(timezone.now().timestamp())
+        s3_key = f"speeches/{speech_id}_audio_{timestamp}.mp3"
+        
+        s3.upload_fileobj(
+            audio_buffer,
+            settings.AWS_STORAGE_BUCKET_NAME,
+            s3_key,
+            ExtraArgs={
+                'ContentType': 'audio/mpeg',
+                'ACL': 'private'
+            }
+        )
+
+        # Generate presigned URL (1 week expiration)
+        presigned_url = s3.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+                'Key': s3_key
+            },
+            ExpiresIn=604800  # 7 days
+        )
+
+        # Calculate cost (OpenAI charges $0.015 per 1,000 characters for TTS-1)
+        char_count = len(text)
+        cost = (char_count / 1000) * 0.015
+        return [presigned_url, cost]
+    except Exception as e:
+        logger.error(f"Error generating speech {speech_id}: {str(e)}")
+        return str(e)
 
 @shared_task()
 def generate_summary_prompt(content:str):

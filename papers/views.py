@@ -7,13 +7,14 @@ from django.http import JsonResponse
 from .models import Paper, PaperSummary, PaperAnalysis, PaperSpeech
 from .serializers import PaperSerializer
 from .services import (
-    extract_text_safely, process_text_for_rag, openai_api_calculate_cost, 
+    extract_text_safely, process_text_for_rag, openai_api_calculate_cost, generate_speech,
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
 from .scrape import process_arxiv_paper, CheckPaper
 from .globals import global_state
 import logging  
 import tiktoken
+import requests
 from django.conf import settings
 import arxivscraper
 import boto3
@@ -394,6 +395,23 @@ class PaperViewSet(viewsets.ModelViewSet):
             'cost': data[1]
         })
 
+    @action(detail=False, methods=['post'])
+    def generate_nobleblocks_speech(self, request, pk=None):
+        try:
+            content = request.data.get('content')
+            voice_type = request.data.get('voice_type')
+            data = generate_speech(content, voice_type)
+            return JsonResponse({
+                "status": 'success',
+                "audio_url": data[0],
+                "cost": data[1]
+            })
+        except Exception as e:
+            return JsonResponse({
+                "status": 'fail',
+                "error": str(e)
+            })
+
     @action(detail=False, methods=['get'])
     def get_current_paper_status(self, request, pk=None):
         return Response({'status': 'success', 'paper':global_state.current_paper})
@@ -461,6 +479,11 @@ class PaperViewSet(viewsets.ModelViewSet):
     def store_results(self, request, pk=None):
         try:
             data = request.data.get('data', [])
+            if len(data) == 0 :
+                last_id = Paper.objects.last().id
+                r = requests.get(f'https://devai1.nobleblocks.com/api/papers/get_results/?last_id=${last_id}', params=request.GET)
+                if r.status_code == 200 :
+                    data = r.json()['data']
             stored_results = []
             
             for item in data:
@@ -530,6 +553,55 @@ class PaperViewSet(viewsets.ModelViewSet):
                 'status': 'error',
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def get_all_data(self, request, pk=None):
+        papers = Paper.objects.all()
+        results = []
+        for paper in papers:
+            try:
+                # Get latest summary and analysis, handle case when none exist
+                latest_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at')
+                latest_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at')
+                
+                results.append({
+                    'id': paper.id,
+                    'title': paper.title,
+                    'pdf_path': str(paper.file) if paper.file else None,
+                    'input_tokens': paper.input_tokens,
+                    'output_tokens': paper.output_tokens,
+                    'total_cost': paper.total_cost,
+                    'has_summary': paper.has_summary,
+                    'has_analysis': paper.has_analysis,
+                    'processed': paper.processed,
+                    'created_at': paper.created_at.isoformat() if paper.created_at else None,
+                    'generated_at': latest_analysis.analyzed_at.isoformat() if latest_analysis.analyzed_at else latest_summary.generated_at.isoformat() if latest_summary.generated_at else None,
+                    'paperSummary': {
+                        'id': latest_summary.id,
+                        'summary_data': latest_summary.summary_data,
+                        'generated_at': latest_summary.generated_at.isoformat() if latest_summary.generated_at else None,
+                    } if latest_summary else None,
+                    'paperAnalysis': {
+                        'id': latest_analysis.id,
+                        'analysis_data': latest_analysis.analysis_data,
+                        'analyzed_at': latest_analysis.analyzed_at.isoformat() if latest_analysis.analyzed_at else None,
+                        'math_errors': latest_analysis.math_errors,
+                        'methodology_errors': latest_analysis.methodology_errors,
+                        'logical_framework_errors': latest_analysis.logical_framework_errors,
+                        'data_analysis_errors': latest_analysis.data_analysis_errors,
+                        'technical_presentation_errors': latest_analysis.technical_presentation_errors,
+                        'research_quality_errors': latest_analysis.research_quality_errors,
+                        'total_errors': latest_analysis.total_errors,
+                    } if latest_analysis else None,
+                })
+            except (PaperSummary.DoesNotExist, PaperAnalysis.DoesNotExist):
+                # Skip papers without summary or analysis
+                continue
+
+        return Response({
+            'status': 'success',
+            'data':results
+        })
     
     @action(detail=False, methods=['get'])
     def verify(self, request, pk=None):
