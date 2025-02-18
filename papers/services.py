@@ -723,7 +723,45 @@ def generate_speech(text:str, voice_type: str):
         cost = (char_count / 1000) * 0.015
         return [presigned_url, cost]
     except Exception as e:
-        logger.error(f"Error generating speech {speech_id}: {str(e)}")
+        print(e)
+        # logger.error(f"Error generating speech {speech_id}: {str(e)}")
+        raise Exception(e)
+
+@shared_task()
+def generate_error_summary(errors, metadata):
+    try:
+        o1_response = client.chat.completions.create(
+            model="o1-preview",
+            messages=[
+                {"role":"user", "content": f"""You are an expert academic editor tasked with summarizing the key issues and recommendations for a research paper. 
+                        Below, you will find metadata about the paper, including its total errors, quality score, major concerns, overall assessment, and improvement priorities. 
+                        Additionally, detailed error findings categorized by type are provided.
+                        Your task is to generate a clear and concise summary in the following format:
+                        1. Start with a brief statement about the paper's topic or objective.
+                        2. Highlight the key issues identified, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation).
+                        3. For each issue, provide a concise description of the problem and its potential impact on the study.
+                        4. Conclude with actionable recommendations for improving the paper.
+
+                        ### Paper Metadata:
+                        {metadata}
+
+                        ### Detailed Error Findings:
+                        {errors}
+
+                        ### Output Format:
+                        1. Begin with a brief introduction to the paper's topic or objective.
+                        2. Summarize the key issues, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation).
+                        3. For each issue, describe the problem and its implications concisely.
+                        4. Provide actionable recommendations at the end.
+
+                        Please generate the summary now."""}
+            ]
+        )
+        o1_response_content = o1_response.choices[0].message.content
+        print(o1_response_content)
+        return o1_response_content
+    except Exception as e:
+        logger.error(f"Error Summary error : {str(e)}")
         return str(e)
 
 @shared_task()

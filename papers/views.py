@@ -7,7 +7,7 @@ from django.http import JsonResponse
 from .models import Paper, PaperSummary, PaperAnalysis, PaperSpeech
 from .serializers import PaperSerializer
 from .services import (
-    extract_text_safely, process_text_for_rag, openai_api_calculate_cost, generate_speech,
+    extract_text_safely, process_text_for_rag, openai_api_calculate_cost, generate_speech,generate_error_summary,
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
 from .scrape import process_arxiv_paper, CheckPaper
@@ -400,11 +400,56 @@ class PaperViewSet(viewsets.ModelViewSet):
         try:
             content = request.data.get('content')
             voice_type = request.data.get('voice_type')
+            valid_voice_types = [choice[0] for choice in PaperSpeech.VOICE_TYPE_CHOICES]
+            if len(content) == 0:
+                return JsonResponse({
+                    "status": 'error',
+                    "error": f"Invalid content."
+                }, status=400)
+            if voice_type not in valid_voice_types:
+                return JsonResponse({
+                    "status": 'error',
+                    "error": f"Invalid voice type. Must be one of: {', '.join(valid_voice_types)}"
+                }, status=400)
+            
             data = generate_speech(content, voice_type)
             return JsonResponse({
                 "status": 'success',
                 "audio_url": data[0],
                 "cost": data[1]
+            })
+        except Exception as e:
+            # Extract the error message from the OpenAI API error response
+            error_message = str(e)
+            if 'error' in error_message:
+                try:
+                    # Parse the error message to get the actual validation message
+                    import ast
+                    error_dict = ast.literal_eval(error_message)
+                    if 'error' in error_dict and 'message' in error_dict['error']:
+                        try:
+                            message_list = ast.literal_eval(error_dict['error']['message'])
+                            if isinstance(message_list, list) and len(message_list) > 0:
+                                error_message = message_list[0].get('msg', str(e))
+                        except:
+                            error_message = error_dict['error']['message']
+                except:
+                    pass
+
+            return JsonResponse({
+                "status": 'error',
+                "error": error_message
+            }, status=400)
+
+    @action(detail=False, methods=['post'])
+    def generate_nobleblocks_error_summary(self, request, pk=None):
+        try:
+            error_finding = request.data.get('errors', [])
+            metadata = request.data.get('metadata',{})
+            summary = generate_error_summary(error_finding, metadata)
+            return JsonResponse({
+                'status':'success',
+                'data': summary
             })
         except Exception as e:
             return JsonResponse({
