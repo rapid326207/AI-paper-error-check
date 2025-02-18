@@ -704,24 +704,25 @@ def generate_speech(text:str, voice_type: str):
             s3_key,
             ExtraArgs={
                 'ContentType': 'audio/mpeg',
-                'ACL': 'private'
+                'ACL': 'public-read'
             }
         )
-
+        location =  boto3.client('s3').get_bucket_location(Bucket=settings.AWS_STORAGE_BUCKET_NAME)['LocationConstraint']
+        url = "https://s3-%s.amazonaws.com/%s/%s" % (location, settings.AWS_STORAGE_BUCKET_NAME, s3_key)
         # Generate presigned URL (1 week expiration)
-        presigned_url = s3.generate_presigned_url(
-            'get_object',
-            Params={
-                'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
-                'Key': s3_key
-            },
-            ExpiresIn=604800  # 7 days
-        )
+        # presigned_url = s3.generate_presigned_url(
+        #     'get_object',
+        #     Params={
+        #         'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+        #         'Key': s3_key
+        #     },
+        #     ExpiresIn=604800  # 7 days
+        # )
 
         # Calculate cost (OpenAI charges $0.015 per 1,000 characters for TTS-1)
         char_count = len(text)
         cost = (char_count / 1000) * 0.015
-        return [presigned_url, cost]
+        return [url, cost]
     except Exception as e:
         print(e)
         # logger.error(f"Error generating speech {speech_id}: {str(e)}")
