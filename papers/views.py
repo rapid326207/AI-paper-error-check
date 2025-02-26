@@ -389,7 +389,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                  # Skip if error summary already exists
                 if 'summary' in summary_data and 'error' in summary_data['summary']:
                     continue
-                    
+                print(paper)
                 metadata = dict()
                 metadata.update(summary_data['metadata'])
                 metadata.update(summary_data['summary'])
