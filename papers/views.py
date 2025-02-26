@@ -348,7 +348,14 @@ class PaperViewSet(viewsets.ModelViewSet):
         temp_file_path = os.path.join('media/papers', filename)
         download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
         document_metadata = CheckPaper(temp_file_path)
-        
+        paper = Paper.objects.filter(id=document_metadata['paper_id']).first()
+        paper_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data
+        paper_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data
+        metadata = dict()
+        metadata.update(paper_summary['metadata'])
+        metadata.update(paper_analysis['summary'])
+        error_summary = generate_error_summary(paper_analysis['analysis'], metadata)
+        paper_summary['summary']['error'] = error_summary
         if os.path.exists(temp_file_path):  
             try:  
                 os.remove(temp_file_path)  
@@ -357,7 +364,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             except Exception as e:  
                 logging.error(f"Error deleting PDF {temp_file_path}: {e}")  
                 print(f"Error deleting PDF {temp_file_path}: {e}")  
-        paper = Paper.objects.filter(id=document_metadata['paper_id']).first()
+
 
         return Response({
             'status': 'success',
@@ -367,9 +374,31 @@ class PaperViewSet(viewsets.ModelViewSet):
             'input_tokens': paper.input_tokens,
             'output_tokens': paper.output_tokens,
             'total_cost': paper.total_cost,
-            'paperSummary': PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data,
-            'paperAnalysis': PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data,
+            'paperSummary': paper_summary,
+            'paperAnalysis': paper_analysis,
         })
+
+    @action(detail=False, methods=['get'])
+    def generate_error_summaries(self, request, pk=None):
+        papers = Paper.objects.all()
+        for paper in papers:
+            try:
+                paper_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data
+                paper_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at')
+                summary_data = paper_summary.summary_data
+                metadata = dict()
+                metadata.update(summary_data['metadata'])
+                metadata.update(summary_data['summary'])
+                error_summary = generate_error_summary(paper_analysis['analysis'], metadata)
+                summary_data['summary']['error'] = error_summary
+                paper_summary.summary_data = summary_data
+                paper_summary.save()
+            except (PaperSummary.DoesNotExist, PaperAnalysis.DoesNotExist):
+                # Skip papers without summary or analysis
+                continue
+        return JsonResponse({
+            'status': 'success',
+        }, status=200)
 
     @action(detail=True, methods=['get'])
     def generate_speech(self, request, pk=None):
@@ -621,23 +650,8 @@ class PaperViewSet(viewsets.ModelViewSet):
                     'processed': paper.processed,
                     'created_at': paper.created_at.isoformat() if paper.created_at else None,
                     'generated_at': latest_analysis.analyzed_at.isoformat() if latest_analysis.analyzed_at else latest_summary.generated_at.isoformat() if latest_summary.generated_at else None,
-                    'paperSummary': {
-                        'id': latest_summary.id,
-                        'summary_data': latest_summary.summary_data,
-                        'generated_at': latest_summary.generated_at.isoformat() if latest_summary.generated_at else None,
-                    } if latest_summary else None,
-                    'paperAnalysis': {
-                        'id': latest_analysis.id,
-                        'analysis_data': latest_analysis.analysis_data,
-                        'analyzed_at': latest_analysis.analyzed_at.isoformat() if latest_analysis.analyzed_at else None,
-                        'math_errors': latest_analysis.math_errors,
-                        'methodology_errors': latest_analysis.methodology_errors,
-                        'logical_framework_errors': latest_analysis.logical_framework_errors,
-                        'data_analysis_errors': latest_analysis.data_analysis_errors,
-                        'technical_presentation_errors': latest_analysis.technical_presentation_errors,
-                        'research_quality_errors': latest_analysis.research_quality_errors,
-                        'total_errors': latest_analysis.total_errors,
-                    } if latest_analysis else None,
+                    'paperSummary': latest_summary.summary_data if latest_summary else None,
+                    'paperAnalysis': latest_analysis.analysis_data if latest_analysis else None,
                 })
             except (PaperSummary.DoesNotExist, PaperAnalysis.DoesNotExist):
                 # Skip papers without summary or analysis
