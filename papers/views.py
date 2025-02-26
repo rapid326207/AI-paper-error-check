@@ -386,6 +386,10 @@ class PaperViewSet(viewsets.ModelViewSet):
                 paper_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data
                 paper_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at')
                 summary_data = paper_summary.summary_data
+                 # Skip if error summary already exists
+                if 'summary' in summary_data and 'error' in summary_data['summary']:
+                    continue
+                    
                 metadata = dict()
                 metadata.update(summary_data['metadata'])
                 metadata.update(summary_data['summary'])
