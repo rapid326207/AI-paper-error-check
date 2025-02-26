@@ -29,8 +29,8 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'sk-proj....')
 client = OpenAI(
     api_key=OPENAI_API_KEY, 
-    timeout=240.0,
-    max_retries=3
+    timeout=600.0,
+    max_retries=1
 )
 s3 = boto3.client(
     's3',
@@ -732,7 +732,7 @@ def generate_speech(text:str, voice_type: str):
 def generate_error_summary(errors, metadata):
     try:
         o1_response = client.chat.completions.create(
-            model="o1-preview",
+            model="o1-mini",
             messages=[
                 {"role":"user", "content": f"""You are an expert academic editor tasked with summarizing the key issues and recommendations for a research paper. 
                         Below, you will find metadata about the paper, including its total errors, quality score, major concerns, overall assessment, and improvement priorities. 
@@ -759,7 +759,6 @@ def generate_error_summary(errors, metadata):
             ]
         )
         o1_response_content = o1_response.choices[0].message.content
-        print(o1_response_content)
         return o1_response_content
     except Exception as e:
         logger.error(f"Error Summary error : {str(e)}")
