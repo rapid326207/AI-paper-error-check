@@ -18,6 +18,9 @@ import tiktoken
 import boto3
 import pusher
 import uuid
+import numpy as np
+from scipy.io import wavfile
+import soundfile as sf
 
 from dotenv import load_dotenv
 
@@ -679,60 +682,125 @@ def generate_speech_task(speech_id):
             speech.save(update_fields=['status', 'error_message'])
         raise  # Re-raise for Celery retry
 
+def split_text(text: str, max_length: int) -> List[str]:
+    """
+    Split text into chunks of maximum length while preserving sentence boundaries.
+    
+    Args:
+        text (str): The input text to split
+        max_length (int): Maximum length of each chunk
+        
+    Returns:
+        List[str]: List of text chunks
+    """
+    # Initialize variables
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    # Split text into sentences
+    sentences = text.replace('\n', ' ').split('. ')
+    
+    for sentence in sentences:
+        # Add period back if it was removed (except for last sentence)
+        sentence = sentence.strip()
+        if not sentence.endswith('.'):
+            sentence += '.'
+            
+        # Get length of current sentence
+        sentence_length = len(sentence)
+        
+        # If adding this sentence would exceed max_length
+        if current_length + sentence_length > max_length and current_chunk:
+            # Store current chunk and start new one
+            chunks.append(' '.join(current_chunk))
+            current_chunk = [sentence]
+            current_length = sentence_length
+        else:
+            # Add sentence to current chunk
+            current_chunk.append(sentence)
+            current_length += sentence_length
+    
+    # Add final chunk if there is one
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+    
+    return chunks
+
 @shared_task()
-def generate_speech(text:str, voice_type: str):
+def generate_speech(text: str, voice_type: str):
     try:
         speech_id = uuid.uuid4()
-
-        response = client.audio.speech.create(
-            model="tts-1",
-            voice=voice_type,
-            input=text,
-            response_format="mp3"
-        )
-        # Create in-memory audio file
-        audio_buffer = BytesIO(response.content)
-
+        max_length = 4096
+        chunks = split_text(text, max_length)
+        
+        # Create a temporary directory to store chunk files
+        temp_files = []
+        all_audio = []
+        
+        # Generate speech for each chunk
+        for i, chunk in enumerate(chunks):
+            temp_path = f"speeches_{speech_id}_chunk_{i}.mp3"
+            response = client.audio.speech.create(
+                model="tts-1",
+                voice=voice_type,
+                input=chunk,
+                response_format="mp3"
+            )
+            response.stream_to_file(temp_path)
+            
+            # Read audio data using scipy
+            audio_data, sample_rate = sf.read(temp_path)
+            all_audio.append(audio_data)
+            temp_files.append(temp_path)
+            
+            # Clean up temporary chunk file
+            os.remove(temp_path)
+        
+        # Combine all audio chunks
+        combined_audio = np.concatenate(all_audio)
+        
+        # Export combined audio to a temporary file
+        final_temp_path = f"speeches_{speech_id}_combined.mp3"
+        sf.write(final_temp_path, combined_audio, sample_rate)
+        
         # Upload to S3
-
         timestamp = int(timezone.now().timestamp())
         s3_key = f"speeches/{speech_id}_audio_{timestamp}.mp3"
         
-        s3.upload_fileobj(
-            audio_buffer,
-            settings.AWS_STORAGE_BUCKET_NAME,
-            s3_key,
-            ExtraArgs={
-                'ContentType': 'audio/mpeg',
-                'ACL': 'public-read'
-            }
-        )
-        location =  boto3.client('s3').get_bucket_location(Bucket=settings.AWS_STORAGE_BUCKET_NAME)['LocationConstraint']
-        url = "https://s3-%s.amazonaws.com/%s/%s" % (location, settings.AWS_STORAGE_BUCKET_NAME, s3_key)
-        # Generate presigned URL (1 week expiration)
-        # presigned_url = s3.generate_presigned_url(
-        #     'get_object',
-        #     Params={
-        #         'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
-        #         'Key': s3_key
-        #     },
-        #     ExpiresIn=604800  # 7 days
-        # )
+        with open(final_temp_path, 'rb') as audio_file:
+            s3.upload_fileobj(
+                audio_file,
+                settings.AWS_STORAGE_BUCKET_NAME,
+                s3_key,
+                ExtraArgs={
+                    'ContentType': 'audio/mpeg',
+                    'ACL': 'public-read'
+                }
+            )
 
+        # Delete the combined file
+        os.remove(final_temp_path)
+
+        # Generate URL
+        location = boto3.client('s3').get_bucket_location(Bucket=settings.AWS_STORAGE_BUCKET_NAME)['LocationConstraint']
+        url = f"https://s3-{location}.amazonaws.com/{settings.AWS_STORAGE_BUCKET_NAME}/{s3_key}"
+        
         # Calculate cost (OpenAI charges $0.015 per 1,000 characters for TTS-1)
         char_count = len(text)
         cost = (char_count / 1000) * 0.015
+        
         return [url, cost]
     except Exception as e:
-        print(e)
-        # logger.error(f"Error generating speech {speech_id}: {str(e)}")
+        logger.error(f"Speech generation error: {str(e)}")
         raise Exception(e)
 
 @shared_task()
 def generate_error_summary(errors, metadata):
     try:
         o1_response = client.chat.completions.create(
-            model="o1-mini",
+            model= "o3-mini",
+            reasoning_effort= "medium",
             messages=[
                 {"role":"user", "content": f"""You are an expert academic editor tasked with summarizing the key issues and recommendations for a research paper. 
                         Below, you will find metadata about the paper, including its total errors, quality score, major concerns, overall assessment, and improvement priorities. 
@@ -751,12 +819,13 @@ def generate_error_summary(errors, metadata):
 
                         ### Output Format:
                         1. Begin with a brief introduction to the paper's topic or objective.
-                        2. Summarize the key issues, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation).
+                        2. Summarize the key issues, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation, and etc).
                         3. For each issue, describe the problem and its implications concisely.
                         4. Provide actionable recommendations at the end.
 
                         Please generate the summary now."""}
-            ]
+            ],
+            max_completion_tokens=3000
         )
         o1_response_content = o1_response.choices[0].message.content
         return o1_response_content
