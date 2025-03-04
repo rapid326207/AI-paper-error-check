@@ -799,17 +799,15 @@ def generate_speech(text: str, voice_type: str):
 def generate_error_summary(errors, metadata):
     try:
         o1_response = client.chat.completions.create(
-            model= "o3-mini",
-            reasoning_effort= "medium",
+            model= "o1-mini",
             messages=[
                 {"role":"user", "content": f"""You are an expert academic editor tasked with summarizing the key issues and recommendations for a research paper. 
                         Below, you will find metadata about the paper, including its total errors, quality score, major concerns, overall assessment, and improvement priorities. 
                         Additionally, detailed error findings categorized by type are provided.
                         Your task is to generate a clear and concise summary in the following format:
-                        1. Start with a brief statement about the paper's topic or objective.
-                        2. Highlight the key issues identified, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation).
-                        3. For each issue, provide a concise description of the problem and its potential impact on the study.
-                        4. Conclude with actionable recommendations for improving the paper.
+                        1. Highlight the key issues identified, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation).
+                        2. For each issue, provide a concise description of the problem and its potential impact on the study.
+                        3. Conclude with actionable recommendations for improving the paper.
 
                         ### Paper Metadata:
                         {metadata}
@@ -818,14 +816,12 @@ def generate_error_summary(errors, metadata):
                         {errors}
 
                         ### Output Format:
-                        1. Begin with a brief introduction to the paper's topic or objective.
-                        2. Summarize the key issues, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation, and etc).
-                        3. For each issue, describe the problem and its implications concisely.
-                        4. Provide actionable recommendations at the end.
+                        1. Summarize the key issues, grouped by relevant categories (e.g., mathematical formulation, methodological framework, statistical rigor, technical presentation, and etc).
+                        2. For each issue, describe the problem and its implications concisely.
+                        3. Provide actionable recommendations at the end.
 
                         Please generate the summary now."""}
             ],
-            max_completion_tokens=3000
         )
         o1_response_content = o1_response.choices[0].message.content
         return o1_response_content
