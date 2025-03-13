@@ -16,7 +16,7 @@ from django.conf import settings
 from docx2python import docx2python
 import tiktoken
 import boto3
-import pusher
+# import pusher
 import uuid
 import numpy as np
 from scipy.io import wavfile
@@ -42,13 +42,13 @@ s3 = boto3.client(
     region_name=settings.AWS_S3_REGION_NAME
 )
 rag_processor = RAGProcessor(OPENAI_API_KEY)
-pusher_client = pusher.Pusher(
-  app_id='1937930',
-  key='0d514904adb1d8e8521e',
-  secret='196ebc1989b14a46cd14',
-  cluster='us3',
-  ssl=True
-)
+#pusher_client = pusher.Pusher(
+#   app_id='1937930',
+#   key='0d514904adb1d8e8521e',
+#   secret='196ebc1989b14a46cd14',
+#   cluster='us3',
+#   ssl=True
+# )
 
 
 def truncate_text(text: str, max_chars: int = 512000) -> str:
@@ -206,6 +206,7 @@ def extract_local_file(file_path):
         raise Exception("No text could be extracted from the PDF")
     
     return "\n".join(text_chunks)
+
 @shared_task()
 def process_text_for_rag(text: str, document_metadata: dict) -> tuple[list[dict], dict]:
     """Process text through RAG pipeline"""
@@ -362,7 +363,7 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
         # Get the paper object
         paper = Paper.objects.select_related('summaries').get(id=metadata.get('paper_id'))
         encoding = tiktoken.encoding_for_model('gpt-4')
-        pusher_client.trigger('my-channel', 'my-event', {'message': f'Currently checking errors: {metadata.get('title')}'})
+        #pusher_client.trigger('my-channel', 'my-event', {'message': f'Currently checking errors: {metadata.get('title')}'})
         # Check if analysis already exists
         if paper.has_analysis:
             existing_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at')
@@ -399,7 +400,7 @@ def analyze_with_orchestrator(text: str, metadata: dict) -> Dict:
         paper.output_tokens = completion_tokens
         paper.total_cost = total_cost
         paper.save()
-        pusher_client.trigger('my-channel', 'my-event', {'message': f'Checking finished: {metadata.get('title')}'})
+        #pusher_client.trigger('my-channel', 'my-event', {'message': f'Checking finished: {metadata.get('title')}'})
         analysis_result['input_tokens'] = prompt_tokens
         analysis_result['output_tokens'] = completion_tokens
         analysis_result['total_cost'] = total_cost
@@ -423,7 +424,7 @@ def generate_paper_summary(content: str, metadata: dict):
             existing_summary.summary_data['metadata']['paper_id'] = metadata.get('paper_id')
             return existing_summary.summary_data
         
-        pusher_client.trigger('my-channel', 'my-event', {'message': f'Currently generating summary: {metadata.get('title')}'})
+        #pusher_client.trigger('my-channel', 'my-event', {'message': f'Currently generating summary: {metadata.get('title')}'})
         # Generate the summary
         o1_response = client.chat.completions.create(
             model="o1-preview",
@@ -536,7 +537,7 @@ def generate_paper_summary(content: str, metadata: dict):
         # Update paper status if needed
         paper.has_summary = True  # Add this field to Paper model if needed
         paper.save()
-        pusher_client.trigger('my-channel', 'my-event', {'message': f'Summary generated: {metadata.get('title')}'})
+        #pusher_client.trigger('my-channel', 'my-event', {'message': f'Summary generated: {metadata.get('title')}'})
         return summary_result
     except Paper.DoesNotExist:
         logger.error(f"Paper with ID {metadata.get('paper_id')} not found")
@@ -799,7 +800,7 @@ def generate_speech(text: str, voice_type: str):
 def generate_error_summary(errors, metadata):
     try:
         o1_response = client.chat.completions.create(
-            model= "o1-mini",
+            model= "o1-preview",
             messages=[
                 {"role":"user", "content": f"""You are an expert academic editor tasked with summarizing the key issues and recommendations for a research paper. 
                         Below, you will find metadata about the paper, including its total errors, quality score, major concerns, overall assessment, and improvement priorities. 

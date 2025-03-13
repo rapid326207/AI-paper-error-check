@@ -358,7 +358,8 @@ class PaperViewSet(viewsets.ModelViewSet):
                         'message': 'Paper url is invalid.'
                     }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                 temp_file_path = download_paper(s3_paper)
-            print(temp_file_path)
+                filename = os.path.basename(temp_file_path)
+
             # Get or create paper based on filename
             document_metadata = CheckPaper(temp_file_path)
             paper = None
