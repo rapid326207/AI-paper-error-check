@@ -10,6 +10,7 @@ from .services import (
     extract_text_safely, process_text_for_rag, openai_api_calculate_cost, generate_speech,generate_error_summary,
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
+from .utils.paper_url import is_valid_paper_url, download_paper
 from .scrape import process_arxiv_paper, CheckPaper
 from .globals import global_state
 import logging  
@@ -342,41 +343,78 @@ class PaperViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def process_s3_paper(self, request, pk=None):
-        s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
-        object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
-        filename = os.path.basename(object_key)
-        temp_file_path = os.path.join('media/papers', filename)
-        download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
-        document_metadata = CheckPaper(temp_file_path)
-        paper = Paper.objects.filter(id=document_metadata['paper_id']).first()
-        paper_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data
-        paper_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data
-        metadata = dict()
-        metadata.update(paper_summary['metadata'])
-        metadata.update(paper_analysis['summary'])
-        error_summary = generate_error_summary(paper_analysis['analysis'], metadata)
-        paper_summary['summary']['error'] = error_summary
-        if os.path.exists(temp_file_path):  
-            try:  
-                os.remove(temp_file_path)  
-                logging.info(f"Deleted PDF: {temp_file_path}")  
-                print(f"Deleted PDF: {temp_file_path}")  
-            except Exception as e:  
-                logging.error(f"Error deleting PDF {temp_file_path}: {e}")  
-                print(f"Error deleting PDF {temp_file_path}: {e}")  
+        try:
+            s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
+            if 'dev-s3.nobleblocks.com' in s3_paper: 
+                object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
+                filename = os.path.basename(object_key)
+                temp_file_path = os.path.join('media/papers', filename)
+                download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
+            else:
+                is_valid = is_valid_paper_url(s3_paper)
+                if not is_valid:
+                    return Response({
+                        'status': 'invalid paper url',
+                        'message': 'Paper url is invalid.'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                temp_file_path = download_paper(s3_paper)
+            print(temp_file_path)
+            # Get or create paper based on filename
+            document_metadata = CheckPaper(temp_file_path)
+            paper = None
+            
+            # Try to find existing paper by title if available in metadata
+            if 'title' in document_metadata:
+                paper = Paper.objects.filter(title=document_metadata['title']).first()
+            
+            # If no paper found by title, create new one
+            if not paper:
+                paper = Paper.objects.create(
+                    title=document_metadata.get('title', filename),
+                    file=temp_file_path
+                )
+                paper.save()
+            
+            # Get latest analysis and summary
+            try:
+                paper_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data
+                paper_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data
+            except (PaperAnalysis.DoesNotExist, PaperSummary.DoesNotExist):
+                return Response({
+                    'status': 'error',
+                    'message': 'Analysis or summary not found for this paper'
+                }, status=status.HTTP_404_NOT_FOUND)
 
+            metadata = dict()
+            metadata.update(paper_summary['metadata'])
+            metadata.update(paper_analysis['summary'])
+            error_summary = generate_error_summary(paper_analysis['analysis'], metadata)
+            paper_summary['summary']['error'] = error_summary
 
-        return Response({
-            'status': 'success',
-            'pdf_path': temp_file_path,
-            'id': paper.id,
-            'title': paper.title,
-            'input_tokens': paper.input_tokens,
-            'output_tokens': paper.output_tokens,
-            'total_cost': paper.total_cost,
-            'paperSummary': paper_summary,
-            'paperAnalysis': paper_analysis,
-        })
+            # Cleanup temp file
+            if os.path.exists(temp_file_path):  
+                try:  
+                    os.remove(temp_file_path)  
+                    logging.info(f"Deleted PDF: {temp_file_path}")  
+                except Exception as e:  
+                    logging.error(f"Error deleting PDF {temp_file_path}: {e}")  
+
+            return Response({
+                'status': 'success',
+                'pdf_path': temp_file_path,
+                'id': paper.id,
+                'title': paper.title,
+                'input_tokens': paper.input_tokens,
+                'output_tokens': paper.output_tokens,
+                'total_cost': paper.total_cost,
+                'paperSummary': paper_summary,
+                'paperAnalysis': paper_analysis,
+            })
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'])
     def generate_error_summaries(self, request, pk=None):
