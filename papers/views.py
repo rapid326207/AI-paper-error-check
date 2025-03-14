@@ -351,7 +351,7 @@ class PaperViewSet(viewsets.ModelViewSet):
                 filename = os.path.basename(object_key)
                 temp_file_path = os.path.join('media/papers', filename)
                 download_s3_file('api-cdn.nobleblocks.com', object_key, temp_file_path)
-            elif 'api-cdn.nobleblocks.com' in s3_paper: 
+            elif 'dev-s3.nobleblocks.com' in s3_paper: 
                 object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
                 filename = os.path.basename(object_key)
                 temp_file_path = os.path.join('media/papers', filename)
