@@ -345,7 +345,13 @@ class PaperViewSet(viewsets.ModelViewSet):
     def process_s3_paper(self, request, pk=None):
         try:
             s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
-            if 'dev-s3.nobleblocks.com' in s3_paper: 
+            # api-cdn.nobleblocks.com/pdf/815dee38-6f06-430c-9750-542d53d4d26a.pdf
+            if 'api-cdn.nobleblocks.com' in s3_paper:
+                object_key = s3_paper.split('api-cdn.nobleblocks.com')[1][1:]
+                filename = os.path.basename(object_key)
+                temp_file_path = os.path.join('media/papers', filename)
+                download_s3_file('api-cdn.nobleblocks.com', object_key, temp_file_path)
+            elif 'api-cdn.nobleblocks.com' in s3_paper: 
                 object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
                 filename = os.path.basename(object_key)
                 temp_file_path = os.path.join('media/papers', filename)
