@@ -733,6 +733,7 @@ def generate_speech(text: str, voice_type: str):
     try:
         speech_id = uuid.uuid4()
         max_length = 4096
+        text = text + 'This voice narration has been sponsored by NobleBlocks, your decentralized publishing platform, rewarding those who truly deserve it.'
         chunks = split_text(text, max_length)
         
         # Create a temporary directory to store chunk files
