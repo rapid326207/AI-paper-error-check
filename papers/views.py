@@ -11,7 +11,7 @@ from .services import (
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
 from .utils.paper_url import is_valid_paper_url, download_paper
-from .scrape import process_arxiv_paper, CheckPaper
+from .scrape import process_arxiv_paper, CheckPaper, GetPaperInfo
 from .globals import global_state
 import logging  
 import tiktoken
@@ -711,6 +711,36 @@ class PaperViewSet(viewsets.ModelViewSet):
             'data':results
         })
     
+    @action(detail=False, methods=['get'])
+    def get_information(self, request, pk=None):
+        s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
+        # api-cdn.nobleblocks.com/pdf/815dee38-6f06-430c-9750-542d53d4d26a.pdf
+        if 'api-cdn.nobleblocks.com' in s3_paper:
+            object_key = s3_paper.split('api-cdn.nobleblocks.com')[1][1:]
+            filename = os.path.basename(object_key)
+            temp_file_path = os.path.join('media/papers', filename)
+            download_s3_file('api-cdn.nobleblocks.com', object_key, temp_file_path)
+        elif 'dev-s3.nobleblocks.com' in s3_paper: 
+            object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
+            filename = os.path.basename(object_key)
+            temp_file_path = os.path.join('media/papers', filename)
+            download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
+        else:
+            is_valid = is_valid_paper_url(s3_paper)
+            if not is_valid:
+                return Response({
+                    'status': 'invalid paper url',
+                    'message': 'Paper url is invalid.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            temp_file_path = download_paper(s3_paper)
+            filename = os.path.basename(temp_file_path)
+        result = GetPaperInfo(temp_file_path)
+        return Response({
+            'status' : 'success',
+            'data' : result
+        })
+        
+
     @action(detail=False, methods=['get'])
     def verify(self, request, pk=None):
         password = request.query_params.get('password', '')  # Access the password

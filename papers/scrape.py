@@ -3,7 +3,7 @@ import requests
 import logging  
 from django.conf import settings
 from .services import (
-    extract_local_file, analyze_with_orchestrator, generate_paper_summary
+    extract_local_file, analyze_with_orchestrator, generate_paper_summary, get_initial_info
 )
 from rest_framework.response import Response
 from rest_framework import status
@@ -162,3 +162,21 @@ def CheckPaper(pdf_path: str):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
     return document_metadata
+
+def GetPaperInfo(pdf_path: str):  
+    try:
+        new_path = pdf_path[6:]
+        full_path = (os.path.join(settings.MEDIA_ROOT, str(new_path)))
+        print(f"Get info of paper - {full_path}")
+        
+        # Extract and analyze text
+        content_to_analyze = extract_local_file(full_path)
+       
+        result = get_initial_info(content_to_analyze)
+        return result
+    except Exception as e:
+        return Response(
+            {"error": str(e)}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    return result

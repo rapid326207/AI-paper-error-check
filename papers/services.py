@@ -832,6 +832,67 @@ def generate_error_summary(errors, metadata):
         return str(e)
 
 @shared_task()
+def get_initial_info(text:str):
+    try:
+        o1_response = client.chat.completions.create(
+            model= "o1-preview",
+            messages=[
+                {
+                    "role":"user", "content": """Please provide the following sections from your research paper, structured as outlined below. Refer to the examples for formatting guidance:
+
+                        ### Output Format:
+                        1. SzTitle: The full manuscript title.
+                        2. Abstract: A concise summary (200–250 words) including key findings and conclusions.
+                        3. Keywords: 4–6 terms separated by commas.
+                        4. Highlights: 3–5 main findings or contributions in bullet points (e.g., '- Improved grid reliability').
+                        5. Strengths and Weaknesses (Optional): Briefly note key strengths and limitations of the study.
+                        6. Commercial Applications and Insights (Optional): Market or industry implications of the research.
+                        7. Societal Benefit and Applications (Optional): Broader societal impacts or public applications.
+
+                        Format response as JSON.
+                        {  
+                            "title": "Full manuscript title (e.g., 'Impact of AI-Driven Diagnostics on Early Disease Detection')",  
+                            "abstract": "A concise summary (200–250 words) of the study's objectives, methodology, key findings, and conclusions.",  
+                            "keywords": ["keyword1", "keyword2", "keyword3", "keyword4"],  
+                            "highlights": [  
+                                "- Bullet point 1 (e.g., '20% increase in diagnostic accuracy')",  
+                                "- Bullet point 2 (e.g., 'Reduced operational costs in healthcare')",  
+                                "- Bullet point 3"  
+                            ],  
+                            "strengths_and_weaknesses": {  
+                                "strength": "Key methodological or analytical strength (e.g., 'Largest dataset analyzed to date')",  
+                                "weakness": "Key limitation (e.g., 'Sample restricted to urban populations')"  
+                            },  
+                            "commercial_applications": "Specific industry or market implications (e.g., 'Potential for AI tool licensing to hospitals')",  
+                            "societal_benefits": "Broader societal impact (e.g., 'Improved accessibility to early diagnostics in rural areas')"  
+                        } 
+                    Please give me the information now."""
+                },
+                {"role": "user", "content": f"Paper Content is {text}"}
+            ],
+        )
+        o1_response_content = o1_response.choices[0].message.content
+        response = client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user", 
+                    "content": f"""  
+                        Given the following data, please format it as a JSON object following the specified response format:  
+
+                        {o1_response_content}  
+                        """  
+                }
+            ],
+            response_format={"type":"json_object"},
+        )
+        result = json.loads(response.choices[0].message.content)
+        return result
+    except Exception as e:
+        logger.error(f"Get initial info error: {str(e)}")
+        logger.error("Response Content:", result)  
+        raise Exception(str(e))
+@shared_task()
 def generate_summary_prompt(content:str):
     return """As a scientific paper analysis expert, extract and analyze the following with high precision:
 
