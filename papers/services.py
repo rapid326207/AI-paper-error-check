@@ -892,6 +892,154 @@ def get_initial_info(text:str):
         logger.error(f"Get initial info error: {str(e)}")
         logger.error("Response Content:", result)  
         raise Exception(str(e))
+
+
+def cmd2text(cmd):
+    if cmd == "Weight":
+        return "weight all sections equally"
+    elif cmd == "Method":
+        return "Focus on methods"
+    elif cmd == "Result":
+        return "Focus on Result"
+    elif cmd == "Limitation":
+        return "Highlight limitations"
+    elif cmd == "Finding":
+        return "Highlight main findings/take home messages"
+    elif cmd == "Data":
+        return "Data availability"
+    else:
+        return ""
+
+def get_citation_format(citation_format):
+    formats_example = {
+        "APA": " Avşar, E., Ulusay, R., Aydan, Ö., & Mutlutürk, M. (2015). On the Difficulties of Geotechnical Sampling and practical Estimates of the Strength of a weakly bonded Volcanic Soil. Bulletin of Engineering Geology and the Environment, 74(4), 1375–1394. https://doi.org/10.1007/s10064-014-0710-9",
+        "Chicago": "Hofman, Courtney A., and Torben C. Rick. “Ancient Biological Invasions and Island Ecosystems: Tracking Translocations of Wild Plants and Animals.” Journal of Archaeological Research 26, no. 1 (2018): 65–115. doi.org/10.1007/s10814-017-9105-3.",
+        "CSE": "Hofman CA, Rick TC. 2018. Ancient Biological Invasions and Island Ecosystems: Tracking Translocations of Wild Plants and Animals. J. Archaeol. [accessed 2019 Mar 11]; 26(1): 65–11. doi.org/10.1007/s10814-017-9105-3.",
+        "AIP": "¹ H.D. Young and R.A. Freedman, Sears & Zemansky's University Physics (Addison-Wesley, San Francisco, CA, 2015) p. 160",
+        "ACS": "    Brown, T.E.; LeMay H.E.; Bursten, B.E.; Murphy, C.; Woodward, P.; Stoltzfus M.E. Chemistry: The Central Science in SI Units. Pearson: New York, 2017.",
+        "IEEE": "[1] E. Nuger and B. Benhabib, “Multi-Camera Active-Vision for Markerless Shape Recovery of Unknown Deforming Objects,” J. Intell. Rob. Syst., vol. 92, no. 2, pp. 223–264, Oct. 2018.",
+    }
+
+    return f"if you want to mention any citations following citations in {citation_format} style like this example:{formats_example[citation_format]},    Always include any related links and URLs as part of the reference details explicitly."
+
+def createPrompt(summary_type, methods=[], citation_format="APA"):
+    combined_methods = (
+        "Also mention all of information but pay more attention to these instructions: \n"
+        if len(methods)
+        else ""
+    )
+    for cmd in methods:
+        combined_methods += cmd2text(cmd) + "\n"
+        
+    base_prompt = """
+    Please analyze and summarize the research paper content following these guidelines:
+
+    1. Core Analysis Requirements:
+    - Extract key information from all major sections
+    - Maintain academic rigor and accuracy
+    - Provide comprehensive but clear explanations
+    - Provide me a comprehensive and detailed academic summary
+    - Include supporting evidence and citations where relevant
+    
+    2. Create a well-structured article:
+        * Begin with an engaging introduction
+        * Present background and context
+        * Describe methodology clearly
+        * Present results systematically
+        * Provide thorough discussion
+        * End with strong conclusions
+        * Include all relevant citations in-text
+
+    3. METADATA EXTRACTION:
+    - Author names with affiliations (comma-separated)
+    - Paper DOI/URL (verify format)
+    - Author/Institution links (including ORCID if available)
+    - Full paper title
+    - Publication date and journal/conference
+    - Keywords and research areas
+    
+    4. Required sections(Give me only these sections):
+    - Metadata
+    - Abstract
+    - Introduction
+    - Conclusion (Long Summary but needs to be clear)
+    - Article (Advanced academic scientific long article like world top class press. It needs to be a text not Markdown format.)
+    - References (as a list of citations)
+    
+    5.  Output Format:
+        Must return in this format. 
+        {
+            "metadata": {
+                "authors": "["author1 (affiliation)", "author2 (affiliation)", ...]",
+                "paper_link": "doi/url",
+                "institution_links": ["url1", "url2"],
+                "title": "complete title",
+                "publication_info": {
+                    "date": "YYYY-MM-DD",
+                    "journal": "name",
+                    "keywords": ["keyword1", "keyword2"]
+                }
+            },
+            "Abstract" : "abstract content",
+            "Introduction": "introduction content",
+            "Article": "article content",
+            "Keywords" : ["keyword1", "keyword2", ...],
+            "References" : ["citation1", "citation2", ...]
+            ...
+        }
+
+    6. Detail Level:
+    - Provide comprehensive coverage of each section
+    - Include specific methodologies, findings, and conclusions
+    - Maintain academic precision while ensuring clarity"""
+
+    if summary_type == 'Basic':
+        return base_prompt
+    else:
+        return f"""{base_prompt}
+
+    7. Additional Requirements:
+    Citation Format:
+    {get_citation_format(citation_format)}
+
+    Special Focus Areas:
+    {combined_methods}"""
+
+@shared_task()
+def generate_new_summary(pdf_content : str, summary_type: str, advanced_methods: list[str], citation_format: str):
+    try:
+        prompt = createPrompt(summary_type, advanced_methods, citation_format)
+        o1_response = client.chat.completions.create(
+            model= "o1-preview",
+            messages=[
+                {
+                    "role":"user", "content": f"{prompt}"
+                },
+                {"role": "user", "content": f"Paper Content is {pdf_content}"}
+            ],
+        )
+        o1_response_content = o1_response.choices[0].message.content
+        response = client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user", 
+                    "content": f"""  
+                        Given the following data, please format it as a JSON object following the specified response format:  
+
+                        {o1_response_content}  
+                        """
+                }
+            ],
+            response_format={"type":"json_object"},
+        )
+        result = json.loads(response.choices[0].message.content)
+        return result
+    except Exception as e:
+        logger.error(f"Get initial info error: {str(e)}")
+        logger.error("Response Content:", result)  
+        raise Exception(str(e))
+
 @shared_task()
 def generate_summary_prompt(content:str):
     return """As a scientific paper analysis expert, extract and analyze the following with high precision:

@@ -11,7 +11,7 @@ from .services import (
     analyze_chunks, analyze_with_orchestrator, generate_paper_summary, generate_analysis_prompt, download_s3_file
 )
 from .utils.paper_url import is_valid_paper_url, download_paper
-from .scrape import process_arxiv_paper, CheckPaper, GetPaperInfo
+from .scrape import process_arxiv_paper, CheckPaper, GetPaperInfo, GenerateNewSummary, GenerateArticle
 from .globals import global_state
 import logging  
 import tiktoken
@@ -341,10 +341,15 @@ class PaperViewSet(viewsets.ModelViewSet):
             'status': 'success',
         })
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['post'])
     def process_s3_paper(self, request, pk=None):
         try:
-            s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
+            s3_paper = request.data.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
+            process_type=request.data.get('process_type', ["ResearchCheck", "GenerateArticle", "GetInfo"])
+            summary_type = request.data.get('summary_type', 'Basic')
+            advanced_methods = request.data.get('advanced_methods', ['Weight'])
+            citation_format = request.data.get('citation_format', 'APA')
+
             # api-cdn.nobleblocks.com/pdf/815dee38-6f06-430c-9750-542d53d4d26a.pdf
             if 'api-cdn.nobleblocks.com' in s3_paper:
                 object_key = s3_paper.split('api-cdn.nobleblocks.com')[1][1:]
@@ -367,56 +372,72 @@ class PaperViewSet(viewsets.ModelViewSet):
                 filename = os.path.basename(temp_file_path)
 
             # Get or create paper based on filename
-            document_metadata = CheckPaper(temp_file_path)
             paper = None
-            
-            # Try to find existing paper by title if available in metadata
-            if 'title' in document_metadata:
-                paper = Paper.objects.filter(title=document_metadata['title']).first()
-            
-            # If no paper found by title, create new one
-            if not paper:
-                paper = Paper.objects.create(
-                    title=document_metadata.get('title', filename),
-                    file=temp_file_path
-                )
-                paper.save()
-            
-            # Get latest analysis and summary
-            try:
-                paper_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data
-                paper_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data
-            except (PaperAnalysis.DoesNotExist, PaperSummary.DoesNotExist):
+
+            if('research_check' in process_type):
+                document_metadata = CheckPaper(temp_file_path)
+                # Try to find existing paper by title if available in metadata
+                if 'title' in document_metadata:
+                    paper = Paper.objects.filter(title=document_metadata['title']).first()
+                
+                # If no paper found by title, create new one
+                if not paper:
+                    paper = Paper.objects.create(
+                        title=document_metadata.get('title', filename),
+                        file=temp_file_path
+                    )
+                    paper.save()
+                
+                # Get latest analysis and summary
+                try:
+                    paper_analysis = PaperAnalysis.objects.filter(paper=paper).latest('analyzed_at').analysis_data
+                    paper_summary = PaperSummary.objects.filter(paper=paper).latest('generated_at').summary_data
+                except (PaperAnalysis.DoesNotExist, PaperSummary.DoesNotExist):
+                    return Response({
+                        'status': 'error',
+                        'message': 'Analysis or summary not found for this paper'
+                    }, status=status.HTTP_404_NOT_FOUND)
+
+                metadata = dict()
+                metadata.update(paper_summary['metadata'])
+                metadata.update(paper_analysis['summary'])
+                error_summary = generate_error_summary(paper_analysis['analysis'], metadata)
+                paper_summary['summary']['error'] = error_summary
+
+                # Cleanup temp file
+                if os.path.exists(temp_file_path):  
+                    try:  
+                        os.remove(temp_file_path)  
+                        logging.info(f"Deleted PDF: {temp_file_path}")  
+                    except Exception as e:  
+                        logging.error(f"Error deleting PDF {temp_file_path}: {e}")  
+
                 return Response({
-                    'status': 'error',
-                    'message': 'Analysis or summary not found for this paper'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            metadata = dict()
-            metadata.update(paper_summary['metadata'])
-            metadata.update(paper_analysis['summary'])
-            error_summary = generate_error_summary(paper_analysis['analysis'], metadata)
-            paper_summary['summary']['error'] = error_summary
-
-            # Cleanup temp file
-            if os.path.exists(temp_file_path):  
-                try:  
-                    os.remove(temp_file_path)  
-                    logging.info(f"Deleted PDF: {temp_file_path}")  
-                except Exception as e:  
-                    logging.error(f"Error deleting PDF {temp_file_path}: {e}")  
-
-            return Response({
-                'status': 'success',
-                'pdf_path': temp_file_path,
-                'id': paper.id,
-                'title': paper.title,
-                'input_tokens': paper.input_tokens,
-                'output_tokens': paper.output_tokens,
-                'total_cost': paper.total_cost,
-                'paperSummary': paper_summary,
-                'paperAnalysis': paper_analysis,
-            })
+                    'status': 'success',
+                    'pdf_path': temp_file_path,
+                    'id': paper.id,
+                    'title': paper.title,
+                    'input_tokens': paper.input_tokens,
+                    'output_tokens': paper.output_tokens,
+                    'total_cost': paper.total_cost,
+                    'paperSummary': paper_summary,
+                    'paperAnalysis': paper_analysis,
+                })
+            
+            if('get_info' in process_type):
+                result = GetPaperInfo(temp_file_path)
+                return Response({
+                    'status' : 'success',
+                    'data' : result
+                })
+            
+            if('generate_article' in process_type):
+                result = GenerateNewSummary(temp_file_path, summary_type, advanced_methods, citation_format)
+                return Response({
+                    'status' : 'success',
+                    'data' : result
+                })
+            
         except Exception as e:
             return Response({
                 'status': 'error',
@@ -740,6 +761,69 @@ class PaperViewSet(viewsets.ModelViewSet):
             'data' : result
         })
         
+    @action(detail=False, methods=['post'])
+    def generate_new_summary(self, request, pk=None):
+        s3_paper = request.data.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
+        summary_type = request.data.get('summary_type', 'Basic')
+        advanced_methods = request.data.get('advanced_methods', ['weight'])
+        citation_format = request.data.get('citation_format', 'APA')
+
+        # api-cdn.nobleblocks.com/pdf/815dee38-6f06-430c-9750-542d53d4d26a.pdf
+        if 'api-cdn.nobleblocks.com' in s3_paper:
+            object_key = s3_paper.split('api-cdn.nobleblocks.com')[1][1:]
+            filename = os.path.basename(object_key)
+            temp_file_path = os.path.join('media/papers', filename)
+            download_s3_file('api-cdn.nobleblocks.com', object_key, temp_file_path)
+        elif 'dev-s3.nobleblocks.com' in s3_paper: 
+            object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
+            filename = os.path.basename(object_key)
+            temp_file_path = os.path.join('media/papers', filename)
+            download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
+        else:
+            is_valid = is_valid_paper_url(s3_paper)
+            if not is_valid:
+                return Response({
+                    'status': 'invalid paper url',
+                    'message': 'Paper url is invalid.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            temp_file_path = download_paper(s3_paper)
+            filename = os.path.basename(temp_file_path)
+
+        result = GenerateNewSummary(temp_file_path, summary_type, advanced_methods, citation_format)
+        return Response({
+            'status' : 'success',
+            'data' : result
+        })
+
+    @action(detail=False, methods=['get'])
+    def generate_article(self, request, pk=None):
+        s3_paper = request.query_params.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
+        # api-cdn.nobleblocks.com/pdf/815dee38-6f06-430c-9750-542d53d4d26a.pdf
+        if 'api-cdn.nobleblocks.com' in s3_paper:
+            object_key = s3_paper.split('api-cdn.nobleblocks.com')[1][1:]
+            filename = os.path.basename(object_key)
+            temp_file_path = os.path.join('media/papers', filename)
+            download_s3_file('api-cdn.nobleblocks.com', object_key, temp_file_path)
+        elif 'dev-s3.nobleblocks.com' in s3_paper: 
+            object_key = s3_paper.split('dev-s3.nobleblocks.com')[1][1:]
+            filename = os.path.basename(object_key)
+            temp_file_path = os.path.join('media/papers', filename)
+            download_s3_file('dev-s3.nobleblocks.com', object_key, temp_file_path)
+        else:
+            is_valid = is_valid_paper_url(s3_paper)
+            if not is_valid:
+                return Response({
+                    'status': 'invalid paper url',
+                    'message': 'Paper url is invalid.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            temp_file_path = download_paper(s3_paper)
+            filename = os.path.basename(temp_file_path)
+
+        result = GenerateArticle(temp_file_path)
+        return Response({
+            'status' : 'success',
+            'data' : result
+        })
 
     @action(detail=False, methods=['get'])
     def verify(self, request, pk=None):
