@@ -374,7 +374,7 @@ class PaperViewSet(viewsets.ModelViewSet):
             # Get or create paper based on filename
             paper = None
 
-            if('research_check' in process_type):
+            if('ResearchCheck' in process_type):
                 document_metadata = CheckPaper(temp_file_path)
                 # Try to find existing paper by title if available in metadata
                 if 'title' in document_metadata:
@@ -424,19 +424,17 @@ class PaperViewSet(viewsets.ModelViewSet):
                     'paperAnalysis': paper_analysis,
                 })
             
-            if('get_info' in process_type):
+            if('GetInfo' in process_type):
                 result = GetPaperInfo(temp_file_path)
                 return Response({
                     'status' : 'success',
                     'data' : result
                 })
             
-            if('generate_article' in process_type):
+            if('GenerateArticle' in process_type):
                 result = GenerateNewSummary(temp_file_path, summary_type, advanced_methods, citation_format)
-                return Response({
-                    'status' : 'success',
-                    'data' : result
-                })
+                result['status'] = "success"
+                return Response(result)
             
         except Exception as e:
             return Response({
@@ -820,6 +818,18 @@ class PaperViewSet(viewsets.ModelViewSet):
             filename = os.path.basename(temp_file_path)
 
         result = GenerateArticle(temp_file_path)
+        return Response({
+            'status' : 'success',
+            'data' : result
+        })
+
+    @action(detail=False, methods=['get'])
+    def test(self, request, pk=None):
+        result = {}
+        result["paperSummary"] = {}
+        result['paperSummary']["metadata"] = {"data" : "wonder"}
+        result["article"] = {}
+        result["paperSummary"] = {}
         return Response({
             'status' : 'success',
             'data' : result

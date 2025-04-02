@@ -941,7 +941,7 @@ def createPrompt(summary_type, methods=[], citation_format="APA"):
     - Provide me a comprehensive and detailed academic summary
     - Include supporting evidence and citations where relevant
     
-    2. Create a well-structured article:
+    2. Create a well-structured article (Advanced academic scientific long article like world top class press):
         * Begin with an engaging introduction
         * Present background and context
         * Describe methodology clearly
@@ -949,6 +949,7 @@ def createPrompt(summary_type, methods=[], citation_format="APA"):
         * Provide thorough discussion
         * End with strong conclusions
         * Include all relevant citations in-text
+      Article needs to be in text format not Markdown format.
 
     3. METADATA EXTRACTION:
     - Author names with affiliations (comma-separated)
@@ -963,29 +964,34 @@ def createPrompt(summary_type, methods=[], citation_format="APA"):
     - Abstract
     - Introduction
     - Conclusion (Long Summary but needs to be clear)
-    - Article (Advanced academic scientific long article like world top class press. It needs to be a text not Markdown format.)
+    - Article (Advanced academic scientific long article like world top class press)
     - References (as a list of citations)
     
     5.  Output Format:
         Must return in this format. 
         {
-            "metadata": {
-                "authors": "["author1 (affiliation)", "author2 (affiliation)", ...]",
-                "paper_link": "doi/url",
-                "institution_links": ["url1", "url2"],
-                "title": "complete title",
-                "publication_info": {
-                    "date": "YYYY-MM-DD",
-                    "journal": "name",
-                    "keywords": ["keyword1", "keyword2"]
-                }
-            },
-            "Abstract" : "abstract content",
-            "Introduction": "introduction content",
-            "Article": "article content",
-            "Keywords" : ["keyword1", "keyword2", ...],
-            "References" : ["citation1", "citation2", ...]
-            ...
+            "paperSummary": {
+                "metadata": {
+                    "authors": "["author1 (affiliation)", "author2 (affiliation)", ...]",
+                    "paper_link": "doi/url",
+                    "institution_links": ["url1", "url2"],
+                    "title": "complete title",
+                    "publication_info": {
+                        "date": "YYYY-MM-DD",
+                        "journal": "name",
+                        "keywords": ["keyword1", "keyword2"]
+                    }
+                },
+            }
+            "articleData" {
+                "abstract" : "abstract content",
+                "introduction": "introduction content",
+                "conclusion": "summary content",
+                "article": "article content",
+                "references" : ["citation1", "citation2", ...]
+                ...
+            }
+            
         }
 
     6. Detail Level:
@@ -1008,6 +1014,7 @@ def createPrompt(summary_type, methods=[], citation_format="APA"):
 @shared_task()
 def generate_new_summary(pdf_content : str, summary_type: str, advanced_methods: list[str], citation_format: str):
     try:
+        encoding = tiktoken.encoding_for_model('gpt-4')
         prompt = createPrompt(summary_type, advanced_methods, citation_format)
         o1_response = client.chat.completions.create(
             model= "o1-preview",
@@ -1019,6 +1026,11 @@ def generate_new_summary(pdf_content : str, summary_type: str, advanced_methods:
             ],
         )
         o1_response_content = o1_response.choices[0].message.content
+        
+        prompt_tokens = len(encoding.encode(prompt))
+        completion_tokens = len(encoding.encode(str(o1_response_content)))
+        total_cost = openai_api_calculate_cost(prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, "o1-preview")
+
         response = client.beta.chat.completions.parse(
             model="gpt-4o-mini",
             messages=[
@@ -1034,6 +1046,12 @@ def generate_new_summary(pdf_content : str, summary_type: str, advanced_methods:
             response_format={"type":"json_object"},
         )
         result = json.loads(response.choices[0].message.content)
+        result['title'] = result['paperSummary']['metadata']['title']
+        result['input_tokens'] = prompt_tokens
+        result['output_tokens'] = completion_tokens
+        result['total_cost'] = total_cost
+        result['id'] = 0
+
         return result
     except Exception as e:
         logger.error(f"Get initial info error: {str(e)}")
