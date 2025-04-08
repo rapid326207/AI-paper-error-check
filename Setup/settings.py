@@ -182,3 +182,13 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Security Settings
+X_FRAME_OPTIONS = 'DENY'  # Prevents all sites from framing your site
+CSP_DEFAULT_SRC = ("'none'",)
+CSP_FRAME_ANCESTORS = ("'none'",)  # Prevents all sites from framing your site
+CSP_STYLE_SRC = ("'self'",)
+CSP_SCRIPT_SRC = ("'self'",)
+CSP_IMG_SRC = ("'self'",)
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True

@@ -345,7 +345,7 @@ class PaperViewSet(viewsets.ModelViewSet):
     def process_s3_paper(self, request, pk=None):
         try:
             s3_paper = request.data.get('s3_paper', "https://dev-s3.nobleblocks.com/research/e1aa4473-3562-4b3f-be3d-32fd63fe9abb.pdf")
-            process_type=request.data.get('process_type', ["ResearchCheck", "GenerateArticle", "GetInfo"])
+            process_type=request.data.get('process_type', ["ResearchCheck"])
             summary_type = request.data.get('summary_type', 'Basic')
             advanced_methods = request.data.get('advanced_methods', ['Weight'])
             citation_format = request.data.get('citation_format', 'APA')
